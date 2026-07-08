@@ -5,7 +5,7 @@ from irreal_auth import require_login, logout_button, is_super_admin, is_profess
 from data_service import get_rows, insert_row, update_row, deactivate_user, create_user, balance_for_student, get_professor_classes, get_student_classes, challenge_multiplier, difficulty_label, type_label, create_challenge_event
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V4", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V5", page_icon="🎮", layout="wide")
 
 # Estilo visual global do IRREAL App
 st.markdown("""
@@ -60,6 +60,35 @@ p, label, span {
 .stAlert {
     border-radius: 14px;
 }
+
+/* Botões principais em verde - melhora visibilidade no celular */
+.stButton > button,
+div[data-testid="stFormSubmitButton"] button,
+button[kind="primary"],
+button[kind="secondary"] {
+    background: linear-gradient(135deg, #00C853 0%, #00E676 100%) !important;
+    color: #04130A !important;
+    border: 1px solid rgba(180, 255, 205, 0.85) !important;
+    border-radius: 12px !important;
+    font-weight: 800 !important;
+    box-shadow: 0 6px 18px rgba(0, 230, 118, 0.22) !important;
+}
+
+.stButton > button:hover,
+div[data-testid="stFormSubmitButton"] button:hover {
+    filter: brightness(1.08);
+    border-color: #FFFFFF !important;
+}
+
+@media (max-width: 768px) {
+    .stButton > button,
+    div[data-testid="stFormSubmitButton"] button {
+        width: 100% !important;
+        min-height: 44px !important;
+        font-size: 1rem !important;
+    }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -68,6 +97,7 @@ logout_button()
 sb = supabase_client()
 
 BUCKET_NAME = "deliverables"
+FILE_TYPES = ["pdf", "png", "jpg", "jpeg", "docx", "xlsx", "txt", "csv"]
 
 def safe_filename(name: str) -> str:
     name = name or "arquivo"
@@ -133,6 +163,39 @@ def show_challenge_material(ch):
     if ch.get("attachment_file_path"):
         show_file_link("Baixar arquivo da atividade", ch.get("attachment_file_name") or "arquivo", ch.get("attachment_file_path"))
 
+
+
+def show_mission_material(mission):
+    """Exibe link e arquivo anexado à missão."""
+    if mission.get("attachment_external_link"):
+        st.markdown(f"[Abrir link/material da missão]({mission.get('attachment_external_link')})")
+    if mission.get("attachment_file_path"):
+        show_file_link("Baixar arquivo da missão", mission.get("attachment_file_name") or "arquivo", mission.get("attachment_file_path"))
+
+
+def render_deliverable_form(form_key: str, c: dict, mission: dict | None, challenge: dict | None, default_title: str = ""):
+    """Formulário reutilizável para o aluno enviar foto, PDF ou arquivo escrito."""
+    with st.form(form_key):
+        title = st.text_input("Título do entregável", value=default_title, key=f"{form_key}_title")
+        description = st.text_area("Descrição / resposta / evidências", key=f"{form_key}_desc")
+        external_link = st.text_input("Link externo [Drive, OneDrive, YouTube, etc.]", key=f"{form_key}_link")
+        uploaded = st.file_uploader(
+            "Anexar foto, PDF ou arquivo da atividade [opcional]",
+            type=FILE_TYPES,
+            key=f"{form_key}_file"
+        )
+        ok = st.form_submit_button("Enviar entregável")
+        if ok:
+            if not title:
+                st.error("Informe o título.")
+            else:
+                ok_email, msg = register_deliverable(c, mission, challenge, title, description, external_link, uploaded)
+                if ok_email:
+                    st.success("Entregável registrado e enviado ao professor por e-mail.")
+                else:
+                    st.warning(f"Entregável registrado, mas o e-mail não foi enviado: {msg}")
+
+
 def get_professor_for_class(c):
     if c.get("professor_id"):
         prof_rows = get_rows("app_users", id=c["professor_id"])
@@ -191,60 +254,110 @@ def render_equipes_page():
         st.stop()
 
     st.write(f"Turma: **{class_label(selected_class)}**")
-    st.info("Cada equipe pode ter no máximo 6 alunos. A equipe pode ser identificada por nome, número ou ambos.")
+    st.info("Cada equipe pode ter no máximo 6 alunos. O professor pode cadastrar aluno direto na equipe, adicionar aluno existente, remover integrante ou excluir a equipe.")
 
-    enrollments = get_class_enrollment_rows(selected_class["id"])
-    if not enrollments:
-        st.warning("Cadastre alunos nesta turma antes de organizar equipes.")
-        st.stop()
+    def make_team_label(number, name):
+        parts = []
+        if str(number or "").strip():
+            parts.append(f"Equipe {str(number).strip()}")
+        if str(name or "").strip():
+            parts.append(str(name).strip())
+        return " - ".join(parts).strip()
 
-    tab_create, tab_manage, tab_summary = st.tabs(["Cadastrar / montar equipe", "Gerenciar alunos", "Resumo"])
+    def refresh_enrollments():
+        return get_class_enrollment_rows(selected_class["id"])
+
+    def count_team(enrollments, team_name):
+        return len([e for e in enrollments if (e.get("team_name") or "").strip().lower() == team_name.strip().lower()])
+
+    tab_new_student, tab_create, tab_manage, tab_summary = st.tabs([
+        "Cadastrar aluno na equipe",
+        "Montar equipe",
+        "Gerenciar / excluir",
+        "Resumo"
+    ])
+
+    with tab_new_student:
+        st.subheader("Cadastrar aluno e já colocar em uma equipe")
+        enrollments = refresh_enrollments()
+        existing_teams = sorted(set((e.get("team_name") or "").strip() for e in enrollments if (e.get("team_name") or "").strip()))
+        with st.form("team_new_student_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                full_name = st.text_input("Nome completo do aluno")
+                email = st.text_input("E-mail do aluno [opcional]")
+                password = st.text_input("Senha inicial", type="password")
+            with c2:
+                mode = st.radio("Equipe", ["Usar equipe existente", "Criar nova equipe"], horizontal=True)
+                selected_team = ""
+                if mode == "Usar equipe existente" and existing_teams:
+                    selected_team = st.selectbox("Equipe existente", existing_teams)
+                else:
+                    team_number = st.text_input("Número da equipe", placeholder="Ex.: 01")
+                    team_name = st.text_input("Nome da equipe", placeholder="Ex.: Diagnóstico")
+                    selected_team = make_team_label(team_number, team_name)
+                st.caption(f"Equipe selecionada: {selected_team or 'informe a equipe'}")
+            ok = st.form_submit_button("Cadastrar aluno e vincular à equipe")
+            if ok:
+                if not full_name or not password:
+                    st.error("Nome completo e senha são obrigatórios.")
+                elif not selected_team:
+                    st.error("Informe ou selecione uma equipe.")
+                elif count_team(enrollments, selected_team) >= 6:
+                    st.error("Esta equipe já possui 6 alunos. Escolha outra equipe ou remova um integrante.")
+                else:
+                    student = create_user(full_name, email, "student", password, created_by=user["id"])
+                    insert_row("enrollments", {
+                        "class_id": selected_class["id"],
+                        "student_id": student["id"],
+                        "team_name": selected_team,
+                        "active": True
+                    })
+                    st.success("Aluno cadastrado e vinculado à equipe.")
+                    st.rerun()
 
     with tab_create:
-        with st.form("team_create_form"):
-            c1, c2, c3 = st.columns([2, 1, 1])
-            with c1:
-                team_name = st.text_input("Nome da equipe", placeholder="Ex.: Equipe Diagnóstico")
-            with c2:
-                team_number = st.text_input("Número da equipe", placeholder="Ex.: 01")
-            with c3:
-                max_students = st.number_input("Limite", min_value=1, max_value=6, value=6, step=1)
+        st.subheader("Montar equipe com alunos já cadastrados")
+        enrollments = refresh_enrollments()
+        if not enrollments:
+            st.warning("Ainda não há alunos cadastrados nesta turma.")
+        else:
+            with st.form("team_create_form"):
+                c1, c2 = st.columns([1, 2])
+                with c1:
+                    team_number = st.text_input("Número da equipe", placeholder="Ex.: 01")
+                with c2:
+                    team_name = st.text_input("Nome da equipe", placeholder="Ex.: Equipe Diagnóstico")
+                preview_label = make_team_label(team_number, team_name)
+                st.caption(f"Identificação da equipe: {preview_label or 'informe nome ou número'}")
 
-            team_label_parts = []
-            if team_number.strip():
-                team_label_parts.append(f"Equipe {team_number.strip()}")
-            if team_name.strip():
-                team_label_parts.append(team_name.strip())
-            preview_label = " - ".join(team_label_parts)
-            st.caption(f"Identificação da equipe: {preview_label or 'informe nome ou número'}")
+                options = {
+                    f"{e['app_users']['full_name']} | atual: {e.get('team_name') or 'sem equipe'}": e
+                    for e in enrollments
+                }
+                selected_students = st.multiselect("Alunos para adicionar", list(options.keys()))
+                ok = st.form_submit_button("Salvar equipe e vincular alunos")
 
-            options = {
-                f"{e['app_users']['full_name']} | atual: {e.get('team_name') or 'sem equipe'}": e
-                for e in enrollments
-            }
-            selected_students = st.multiselect("Alunos para adicionar", list(options.keys()))
-            ok = st.form_submit_button("Salvar equipe e vincular alunos")
-
-            if ok:
-                if not preview_label:
-                    st.error("Informe pelo menos o nome ou o número da equipe.")
-                else:
-                    selected_enrollments = [options[x] for x in selected_students]
-                    current_members = [
-                        e for e in enrollments
-                        if (e.get("team_name") or "").strip().lower() == preview_label.strip().lower()
-                    ]
-                    selected_ids = {e["id"] for e in selected_enrollments}
-                    new_count = len([e for e in current_members if e["id"] not in selected_ids]) + len(selected_enrollments)
-                    if new_count > int(max_students):
-                        st.error(f"Limite excedido. Esta equipe ficaria com {new_count} alunos. Máximo permitido: {int(max_students)}.")
+                if ok:
+                    if not preview_label:
+                        st.error("Informe pelo menos o nome ou o número da equipe.")
                     else:
-                        for e in selected_enrollments:
-                            update_row("enrollments", e["id"], {"team_name": preview_label})
-                        st.success(f"Equipe '{preview_label}' atualizada com sucesso.")
-                        st.rerun()
+                        selected_enrollments = [options[x] for x in selected_students]
+                        current_count = count_team(enrollments, preview_label)
+                        selected_ids = {e["id"] for e in selected_enrollments}
+                        already_selected_in_team = len([e for e in selected_enrollments if (e.get("team_name") or "").strip().lower() == preview_label.strip().lower()])
+                        new_count = current_count + len(selected_enrollments) - already_selected_in_team
+                        if new_count > 6:
+                            st.error(f"Limite excedido. Esta equipe ficaria com {new_count} alunos. Máximo permitido: 6.")
+                        else:
+                            for e in selected_enrollments:
+                                update_row("enrollments", e["id"], {"team_name": preview_label})
+                            st.success(f"Equipe '{preview_label}' atualizada com sucesso.")
+                            st.rerun()
 
     with tab_manage:
+        st.subheader("Gerenciar equipe")
+        enrollments = refresh_enrollments()
         teams = sorted(set((e.get("team_name") or "").strip() for e in enrollments if (e.get("team_name") or "").strip()))
         if not teams:
             st.info("Ainda não há equipes cadastradas nesta turma.")
@@ -256,16 +369,13 @@ def render_equipes_page():
                 aluno = e.get("app_users") or {}
                 c1, c2 = st.columns([3, 1])
                 c1.write(f"**{aluno.get('full_name')}** — {aluno.get('email') or 'sem e-mail'}")
-                if c2.button("Remover da equipe", key=f"remove_team_{e['id']}"):
+                if c2.button("Remover", key=f"remove_team_{e['id']}"):
                     update_row("enrollments", e["id"], {"team_name": ""})
                     st.rerun()
 
             st.divider()
             st.subheader("Adicionar aluno existente à equipe")
-            free_or_other = [
-                e for e in enrollments
-                if (e.get("team_name") or "").strip() != team
-            ]
+            free_or_other = [e for e in enrollments if (e.get("team_name") or "").strip() != team]
             if free_or_other:
                 options = {
                     f"{e['app_users']['full_name']} | atual: {e.get('team_name') or 'sem equipe'}": e
@@ -280,9 +390,20 @@ def render_equipes_page():
                         st.success("Aluno adicionado à equipe.")
                         st.rerun()
             else:
-                st.info("Todos os alunos já estão nesta equipe.")
+                st.info("Não há alunos fora desta equipe.")
+
+            st.divider()
+            st.subheader("Excluir equipe")
+            st.warning("Excluir equipe remove apenas o vínculo/equipe dos alunos. Os alunos continuam cadastrados na turma.")
+            confirm = st.checkbox(f"Confirmo excluir/limpar a equipe: {team}", key=f"confirm_delete_team_{team}")
+            if st.button("Excluir equipe", key=f"delete_team_{team}", disabled=not confirm):
+                for e in members:
+                    update_row("enrollments", e["id"], {"team_name": ""})
+                st.success("Equipe removida dos alunos.")
+                st.rerun()
 
     with tab_summary:
+        enrollments = refresh_enrollments()
         rows = []
         for e in enrollments:
             aluno = e.get("app_users") or {}
@@ -293,13 +414,15 @@ def render_equipes_page():
             })
         df = pd.DataFrame(rows)
         st.subheader("Alunos por equipe")
-        st.dataframe(df.sort_values(["equipe", "aluno"]), use_container_width=True, hide_index=True)
-        if not df.empty:
+        if df.empty:
+            st.info("Nenhum aluno cadastrado.")
+        else:
+            st.dataframe(df.sort_values(["equipe", "aluno"]), use_container_width=True, hide_index=True)
             st.subheader("Quantidade por equipe")
             st.dataframe(df.groupby("equipe")["aluno"].count().reset_index(name="quantidade"), use_container_width=True, hide_index=True)
 
 
-st.sidebar.title("🎮 IRREAL Cloud V4")
+st.sidebar.title("🎮 IRREAL Cloud V5")
 
 def role_label(role):
     return {"super_admin": "Controle geral", "professor": "Professor", "student": "Aluno"}.get(role, role)
@@ -343,10 +466,10 @@ def menu_for_user(user):
         return ["Dashboard geral", "Professores", "Cursos e turmas", "Alunos", "Equipes", "Missões", "Desafios e atividades", "Liderança", "IRREAIS e loja", "Entregáveis", "Exportações", "Configuração"]
     if is_professor(user):
         return ["Minhas turmas", "Alunos", "Equipes", "Missões", "Desafios e atividades", "Liderança", "IRREAIS e loja", "Entregáveis"]
-    return ["Minha área", "Meus desafios", "Enviar entregável", "Meu extrato"]
+    return ["Minha área", "Minhas missões", "Meus desafios", "Enviar entregável", "Meu extrato"]
 
 page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V4")
+st.title("IRREAL App Cloud V5")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 if page == "Dashboard geral":
@@ -461,7 +584,7 @@ elif page == "Missões":
     st.header("Missões")
     selected_class = select_row("Turma", get_available_classes(), class_label)
     if not selected_class: st.stop()
-    tab1, tab2 = st.tabs(["Unidade curricular", "Missão"])
+    tab1, tab2, tab3 = st.tabs(["Unidade curricular", "Criar missão", "Gerenciar missões"])
     with tab1:
         with st.form("unit_form"):
             name = st.text_input("Unidade curricular")
@@ -478,13 +601,66 @@ elif page == "Missões":
             unit = select_row("Unidade curricular", units, lambda r: r["name"]) if units else None
             title = st.text_input("Título da missão")
             description = st.text_area("Descrição / orientação")
+            mission_link = st.text_input("Link do material da missão [opcional]")
+            mission_file = st.file_uploader("Anexar arquivo da missão [PDF, foto ou documento]", type=FILE_TYPES, key="mission_file_create")
             max_irreais = st.number_input("Valor máximo em IRREAIS", min_value=1, value=100, step=10)
             deadline = st.date_input("Data limite", value=date.today())
             ok = st.form_submit_button("Cadastrar missão")
             if ok and title:
-                insert_row("missions", {"class_id": selected_class["id"], "unit_id": unit["id"] if unit else None, "title": title.strip(), "description": description.strip(), "max_irreais": int(max_irreais), "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(), "active": True})
+                mission_file_name, mission_file_path = upload_file_to_storage(mission_file, f"mission_attachments/{selected_class['id']}/{user['id']}")
+                insert_row("missions", {
+                    "class_id": selected_class["id"],
+                    "unit_id": unit["id"] if unit else None,
+                    "title": title.strip(),
+                    "description": description.strip(),
+                    "attachment_external_link": mission_link.strip(),
+                    "attachment_file_name": mission_file_name,
+                    "attachment_file_path": mission_file_path,
+                    "max_irreais": int(max_irreais),
+                    "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(),
+                    "active": True
+                })
                 st.success("Missão cadastrada.")
-        st.dataframe(pd.DataFrame(get_rows("missions", class_id=selected_class["id"], active=True)), use_container_width=True, hide_index=True)
+                st.rerun()
+    with tab3:
+        st.subheader("Missões ativas")
+        missions_active = get_rows("missions", class_id=selected_class["id"], active=True, order="created_at")
+        if not missions_active:
+            st.info("Nenhuma missão ativa.")
+        for m in missions_active:
+            with st.expander(f"{m.get('title')} | prazo: {m.get('deadline_at') or '-'}"):
+                st.write(m.get("description") or "-")
+                show_mission_material(m)
+                new_link = st.text_input("Atualizar link do material", value=m.get("attachment_external_link") or "", key=f"mission_link_{m['id']}")
+                new_file = st.file_uploader("Adicionar/substituir arquivo da missão", type=FILE_TYPES, key=f"mission_file_{m['id']}")
+                c1, c2, c3, c4 = st.columns(4)
+                if c1.button("Salvar link", key=f"save_mission_link_{m['id']}"):
+                    update_row("missions", m["id"], {"attachment_external_link": new_link.strip()})
+                    st.success("Link atualizado.")
+                    st.rerun()
+                if c2.button("Enviar arquivo", key=f"upload_mission_file_{m['id']}"):
+                    if new_file is None:
+                        st.warning("Selecione um arquivo primeiro.")
+                    else:
+                        file_name, file_path = upload_file_to_storage(new_file, f"mission_attachments/{selected_class['id']}/{user['id']}")
+                        update_row("missions", m["id"], {"attachment_file_name": file_name, "attachment_file_path": file_path})
+                        st.success("Arquivo da missão atualizado.")
+                        st.rerun()
+                if c3.button("Excluir arquivo/link", key=f"clear_mission_file_{m['id']}"):
+                    update_row("missions", m["id"], {"attachment_external_link": "", "attachment_file_name": "", "attachment_file_path": ""})
+                    st.success("Material removido da missão.")
+                    st.rerun()
+                if c4.button("Desativar missão", key=f"deact_mission_{m['id']}"):
+                    update_row("missions", m["id"], {"active": False})
+                    st.success("Missão desativada.")
+                    st.rerun()
+
+        st.subheader("Missões inativas")
+        missions_inactive = get_rows("missions", class_id=selected_class["id"], active=False, order="created_at")
+        for m in missions_inactive:
+            if st.button(f"Reativar missão: {m.get('title')}", key=f"react_mission_{m['id']}"):
+                update_row("missions", m["id"], {"active": True})
+                st.rerun()
 
 
 elif page == "Desafios e atividades":
@@ -521,7 +697,7 @@ elif page == "Desafios e atividades":
             instructions = st.text_area("Instruções ao aluno")
             expected = st.text_area("Entregável esperado")
             attachment_external_link = st.text_input("Link do material/anexo do professor [opcional]")
-            teacher_attachment = st.file_uploader("Anexar arquivo da atividade [opcional]", key="teacher_challenge_attachment")
+            teacher_attachment = st.file_uploader("Anexar arquivo da atividade [PDF, foto ou documento]", type=FILE_TYPES, key="teacher_challenge_attachment")
             deadline = st.date_input("Prazo", value=date.today())
             penalty = st.number_input("Penalidade máxima sugerida", min_value=0, value=0, step=5)
             ok = st.form_submit_button("Publicar desafio/atividade")
@@ -575,6 +751,26 @@ elif page == "Desafios e atividades":
                 st.write("**Entregável esperado:**", ch.get("expected_deliverable") or "-")
                 st.write(f"**IRREAIS:** {ch.get('max_irreais')} | **Prazo:** {ch.get('deadline_at')}")
                 show_challenge_material(ch)
+                st.markdown("**Gerenciar material da atividade:**")
+                new_activity_link = st.text_input("Atualizar link do material", value=ch.get("attachment_external_link") or "", key=f"ch_link_{ch['id']}")
+                new_activity_file = st.file_uploader("Adicionar/substituir arquivo da atividade", type=FILE_TYPES, key=f"ch_file_{ch['id']}")
+                mc1, mc2, mc3 = st.columns(3)
+                if mc1.button("Salvar link", key=f"save_ch_link_{ch['id']}"):
+                    update_row("challenges", ch["id"], {"attachment_external_link": new_activity_link.strip()})
+                    create_challenge_event(ch["id"], user["id"], "material_updated", "Link do material atualizado.")
+                    st.rerun()
+                if mc2.button("Enviar arquivo", key=f"upload_ch_file_{ch['id']}"):
+                    if new_activity_file is None:
+                        st.warning("Selecione um arquivo primeiro.")
+                    else:
+                        file_name, file_path = upload_file_to_storage(new_activity_file, f"teacher_activity_attachments/{selected_class['id']}/{user['id']}")
+                        update_row("challenges", ch["id"], {"attachment_file_name": file_name, "attachment_file_path": file_path})
+                        create_challenge_event(ch["id"], user["id"], "material_updated", "Arquivo do material atualizado.")
+                        st.rerun()
+                if mc3.button("Excluir arquivo/link", key=f"clear_ch_file_{ch['id']}"):
+                    update_row("challenges", ch["id"], {"attachment_external_link": "", "attachment_file_name": "", "attachment_file_path": ""})
+                    create_challenge_event(ch["id"], user["id"], "material_removed", "Material removido.")
+                    st.rerun()
                 notes = st.text_input("Motivo da retirada", key=f"remove_note_{ch['id']}")
                 c1, c2 = st.columns(2)
                 if c1.button("Retirar/desativar", key=f"remove_ch_{ch['id']}"):
@@ -609,16 +805,43 @@ elif page == "Liderança":
     if not selected_class: st.stop()
     enrollments = sb.table("enrollments").select("id, team_name, app_users(id, full_name)").eq("class_id", selected_class["id"]).eq("active", True).execute().data or []
     students = [{"id": e["app_users"]["id"], "full_name": e["app_users"]["full_name"], "team_name": e.get("team_name")} for e in enrollments if e.get("app_users")]
-    with st.form("leader_form"):
-        class_date = st.date_input("Data da aula", value=date.today())
-        student = select_row("Líder do dia", students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}")
-        notes = st.text_area("Observações")
-        ok = st.form_submit_button("Registrar líder")
-        if ok and student:
-            insert_row("leaders", {"class_id": selected_class["id"], "class_date": str(class_date), "student_id": student["id"], "notes": notes.strip()})
-            st.success("Líder registrado.")
-    leaders = sb.table("leaders").select("id, class_date, notes, app_users(full_name)").eq("class_id", selected_class["id"]).order("class_date", desc=True).execute().data or []
-    st.dataframe(pd.DataFrame(leaders), use_container_width=True, hide_index=True)
+    if not students:
+        st.warning("Cadastre alunos na turma antes de registrar liderança.")
+        st.stop()
+
+    tab_register, tab_manage = st.tabs(["Registrar liderança", "Gerenciar / excluir registros"])
+    with tab_register:
+        with st.form("leader_form"):
+            class_date = st.date_input("Data da aula", value=date.today())
+            student = select_row("Líder do dia", students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}")
+            notes = st.text_area("Observações")
+            ok = st.form_submit_button("Registrar líder")
+            if ok and student:
+                insert_row("leaders", {"class_id": selected_class["id"], "class_date": str(class_date), "student_id": student["id"], "notes": notes.strip()})
+                st.success("Líder registrado.")
+                st.rerun()
+    with tab_manage:
+        leaders = sb.table("leaders").select("id, class_date, notes, student_id, app_users(full_name)").eq("class_id", selected_class["id"]).order("class_date", desc=True).execute().data or []
+        if not leaders:
+            st.info("Nenhum registro de liderança nesta turma.")
+        for l in leaders:
+            current_name = (l.get("app_users") or {}).get("full_name") or "Aluno não encontrado"
+            with st.expander(f"{l.get('class_date')} | {current_name}"):
+                new_student = select_row("Alterar líder", students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}")
+                new_notes = st.text_area("Observações", value=l.get("notes") or "", key=f"leader_notes_{l['id']}")
+                c1, c2 = st.columns(2)
+                if c1.button("Salvar alteração", key=f"update_leader_{l['id']}"):
+                    update_row("leaders", l["id"], {"student_id": new_student["id"], "notes": new_notes.strip()})
+                    st.success("Registro atualizado.")
+                    st.rerun()
+                if c2.button("Excluir registro", key=f"delete_leader_{l['id']}"):
+                    sb.table("leaders").delete().eq("id", l["id"]).execute()
+                    st.success("Registro excluído.")
+                    st.rerun()
+        if leaders:
+            st.subheader("Tabela de liderança")
+            st.dataframe(pd.DataFrame(leaders), use_container_width=True, hide_index=True)
+
 
 elif page == "IRREAIS e loja":
     st.header("IRREAIS e loja")
@@ -690,6 +913,30 @@ elif page == "Minha área":
         st.metric(f"Saldo — {c.get('name')}", f"{balance_for_student(user['id'], c.get('id'))} IRREAIS")
 
 
+elif page == "Minhas missões":
+    st.header("Minhas missões")
+    class_rows = get_student_classes(user["id"])
+    selected = select_row("Turma", [{"class": e.get("classes") or {}} for e in class_rows], lambda r: class_label(r["class"]))
+    if not selected: st.stop()
+    c = selected["class"]
+    missions = get_rows("missions", class_id=c["id"], active=True, order="deadline_at")
+    if not missions:
+        st.info("Nenhuma missão ativa no momento.")
+    for m in missions:
+        with st.expander(f"Missão | {m.get('title')} | prazo: {m.get('deadline_at') or '-'}"):
+            st.write(m.get("description") or "-")
+            st.write(f"**IRREAIS máximos:** {m.get('max_irreais')}")
+            show_mission_material(m)
+            st.divider()
+            st.subheader("Enviar entregável desta missão")
+            render_deliverable_form(
+                f"mission_deliverable_{m['id']}",
+                c,
+                m,
+                None,
+                default_title=f"Entrega - {m.get('title')}"
+            )
+
 elif page == "Meus desafios":
     st.header("Meus desafios e atividades")
     class_rows = get_student_classes(user["id"])
@@ -715,7 +962,7 @@ elif page == "Meus desafios":
                 q_title = st.text_input("Título do entregável", value=f"Entrega - {ch['title']}", key=f"quick_title_{ch['id']}")
                 q_description = st.text_area("Descrição / resposta / evidências", key=f"quick_desc_{ch['id']}")
                 q_external_link = st.text_input("Link externo [Drive, OneDrive, YouTube, etc.]", key=f"quick_link_{ch['id']}")
-                q_uploaded = st.file_uploader("Anexar arquivo do entregável [opcional]", key=f"quick_file_{ch['id']}")
+                q_uploaded = st.file_uploader("Anexar foto, PDF ou arquivo escrito [opcional]", type=FILE_TYPES, key=f"quick_file_{ch['id']}")
                 q_ok = st.form_submit_button("Enviar entregável")
                 if q_ok:
                     if not q_title:
@@ -744,7 +991,7 @@ elif page == "Enviar entregável":
         title = st.text_input("Título do entregável")
         description = st.text_area("Descrição / resposta / evidências")
         external_link = st.text_input("Link externo [Drive, OneDrive, YouTube, etc.]")
-        uploaded = st.file_uploader("Arquivo opcional")
+        uploaded = st.file_uploader("Arquivo opcional [foto, PDF ou documento]", type=FILE_TYPES)
         ok = st.form_submit_button("Enviar entregável")
         if ok:
             if not title:
@@ -784,4 +1031,5 @@ elif page == "Configuração":
     - Bucket `deliverables` criado no Supabase Storage, caso use upload de arquivos.
     - Migração `sql/migration_v1_to_v2_challenges.sql` executada se já existia banco V1.
     - Migração V4 executada para anexos de atividades.
+    - Migração V5 executada para anexos de missões e botões de gerenciamento.
     """)
