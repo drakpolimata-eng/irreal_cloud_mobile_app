@@ -31,10 +31,6 @@ def normalize_text(value: str) -> str:
 
 
 def _bcrypt_safe_password(password: str) -> str:
-    """
-    O bcrypt aceita no máximo 72 bytes.
-    Esta função evita erro em senha longa ou com caracteres especiais.
-    """
     password = password or ""
     encoded = password.encode("utf-8")[:72]
     return encoded.decode("utf-8", errors="ignore")
@@ -148,7 +144,9 @@ def apply_login_style():
     }
 
     div[data-testid="stFormSubmitButton"] button,
-    div.stButton > button {
+    div.stButton > button,
+    button[kind="primary"],
+    button[kind="secondary"] {
         background: linear-gradient(135deg, #16A34A 0%, #22C55E 55%, #86EFAC 100%) !important;
         color: #04130A !important;
         font-weight: 800 !important;
