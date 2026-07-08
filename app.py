@@ -6,6 +6,63 @@ from data_service import get_rows, insert_row, update_row, deactivate_user, crea
 from email_service import send_deliverable_email
 
 st.set_page_config(page_title="IRREAL App Cloud V4", page_icon="🎮", layout="wide")
+
+# Estilo visual global do IRREAL App
+st.markdown("""
+<style>
+.stApp {
+    background:
+        radial-gradient(circle at top left, rgba(255, 199, 44, 0.24) 0%, transparent 30%),
+        radial-gradient(circle at bottom right, rgba(0, 255, 180, 0.18) 0%, transparent 34%),
+        linear-gradient(135deg, #160B2E 0%, #0B1020 52%, #05070D 100%);
+    color: #F8FAFC;
+}
+
+.block-container {
+    padding-top: 1.2rem;
+    padding-bottom: 2rem;
+    max-width: 1200px;
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1B1035 0%, #0B1020 55%, #05070D 100%);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+div[data-testid="stForm"] {
+    background: rgba(15, 23, 42, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+    padding: 1.1rem;
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.32);
+}
+
+div[data-testid="stMetric"] {
+    background: rgba(15, 23, 42, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 16px;
+    padding: 1rem;
+}
+
+[data-testid="stExpander"] {
+    background: rgba(15, 23, 42, 0.58);
+    border-radius: 14px;
+}
+
+h1, h2, h3 {
+    color: #FFFFFF;
+}
+
+p, label, span {
+    color: #F2F2F2;
+}
+
+.stAlert {
+    border-radius: 14px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 user = require_login()
 logout_button()
 sb = supabase_client()
