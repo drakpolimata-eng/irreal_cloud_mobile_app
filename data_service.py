@@ -69,6 +69,7 @@ def get_professor_classes(professor_id):
         select="id, name, shift, class_code, active, courses(name), professor_id",
         order="name",
         professor_id=professor_id,
+        active=True,
     )
 
 
@@ -124,3 +125,4 @@ def create_challenge_event(challenge_id, actor_id, event_type, notes=""):
             "notes": notes,
         },
     )
+
