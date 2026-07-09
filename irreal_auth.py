@@ -88,22 +88,25 @@ def authenticate(identifier: str, password: str, role: str | None = None):
 
     identifier_norm = normalize_text(identifier)
 
-    query = (
-        sb.table("app_users")
-        .select("*")
-        .eq("active", True)
-    )
+    def run_query(field: str):
+        query = (
+            sb.table("app_users")
+            .select("*")
+            .eq("active", True)
+        )
+        if role and role != "Todos":
+            query = query.eq("role", role)
+        return query.ilike(field, identifier_norm).limit(5).execute().data or []
 
     if "@" in identifier_norm:
-        query = query.ilike("email", identifier_norm)
+        users = run_query("email")
     else:
-        query = query.ilike("full_name", identifier_norm)
-
-    if role and role != "Todos":
-        query = query.eq("role", role)
-
-    res = query.limit(5).execute()
-    users = res.data or []
+        users = run_query("full_name")
+        if not users:
+            try:
+                users = run_query("ra")
+            except Exception:
+                users = []
 
     for user in users:
         if verify_password(password, user.get("password_hash", "")):
@@ -249,7 +252,7 @@ def require_login():
             }[x],
         )
 
-        identifier = st.text_input("Nome completo ou e-mail")
+        identifier = st.text_input("Nome completo, e-mail ou RA")
         password = st.text_input("Senha", type="password")
 
         submitted = st.form_submit_button("Entrar")
