@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
+from urllib.parse import quote
 from irreal_auth import (
     require_login,
     logout_button,
@@ -26,13 +27,196 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V6", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V7", page_icon="🎮", layout="wide")
+
+
+def get_query_param(name: str) -> str:
+    """Lê parâmetro da URL no Streamlit Cloud."""
+    try:
+        value = st.query_params.get(name, "")
+    except Exception:
+        return ""
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value or ""
+
+
+def apply_public_registration_style():
+    st.markdown("""
+    <style>
+    .stApp {
+        background:
+            radial-gradient(circle at top left, rgba(255, 199, 44, 0.24) 0%, transparent 30%),
+            radial-gradient(circle at bottom right, rgba(0, 255, 180, 0.22) 0%, transparent 34%),
+            linear-gradient(135deg, #160B2E 0%, #0B1020 52%, #031B1B 100%);
+        color: #F8FAFC;
+    }
+    .block-container { max-width: 860px; padding-top: 2rem; }
+    div[data-testid="stForm"] {
+        background: rgba(15, 23, 42, 0.90);
+        border: 1px solid rgba(0, 255, 180, 0.30);
+        border-radius: 18px;
+        padding: 1.2rem;
+        box-shadow: 0 12px 35px rgba(0, 0, 0, 0.36);
+    }
+    div.stButton > button,
+    div[data-testid="stFormSubmitButton"] button {
+        background: linear-gradient(135deg, #16A34A 0%, #22C55E 55%, #86EFAC 100%) !important;
+        color: #04130A !important;
+        font-weight: 800 !important;
+        border: 1px solid rgba(134, 239, 172, 0.75) !important;
+        border-radius: 12px !important;
+        min-height: 42px !important;
+        box-shadow: 0 0 18px rgba(34, 197, 94, 0.35) !important;
+    }
+    h1, h2, h3, label, p, span { color: #F8FAFC; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def render_public_student_registration():
+    """Cadastro público de aluno por link da turma: nome completo + RA."""
+    apply_public_registration_style()
+    st.title("🎮 Cadastro de aluno — IRREAL App")
+
+    class_code = (
+        get_query_param("cadastro_turma")
+        or get_query_param("turma")
+        or get_query_param("class_code")
+    ).strip()
+
+    if not class_code:
+        st.error("Link de cadastro inválido. Peça ao professor o link correto da turma.")
+        st.stop()
+
+    sb_public = supabase_client()
+    if sb_public is None:
+        st.error("Configuração incompleta do Supabase. Avise o professor.")
+        st.stop()
+
+    try:
+        class_rows = (
+            sb_public.table("classes")
+            .select("id, name, shift, class_code, active, professor_id, courses(name), app_users(full_name, email)")
+            .eq("class_code", class_code)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        st.error(f"Não foi possível localizar a turma. Erro: {e}")
+        st.stop()
+
+    if not class_rows:
+        st.error("Turma não encontrada ou inativa. Confira o link enviado pelo professor.")
+        st.stop()
+
+    cls = class_rows[0]
+    course = cls.get("courses") or {}
+    professor = cls.get("app_users") or {}
+
+    st.info(
+        f"Turma: {cls.get('name')} | Turno: {cls.get('shift')} | "
+        f"Curso: {course.get('name') or '-'} | Professor: {professor.get('full_name') or '-'}"
+    )
+
+    with st.form("public_student_registration_form"):
+        full_name = st.text_input("Nome completo")
+        ra = st.text_input("RA / Registro acadêmico")
+        email = st.text_input("E-mail [opcional]")
+        submitted = st.form_submit_button("Cadastrar meu acesso")
+
+    if submitted:
+        full_name = (full_name or "").strip()
+        ra = (ra or "").strip()
+        email = (email or "").strip() or None
+
+        if not full_name or not ra:
+            st.error("Nome completo e RA são obrigatórios.")
+            st.stop()
+
+        try:
+            existing = (
+                sb_public.table("app_users")
+                .select("*")
+                .eq("ra", ra)
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+        except Exception as e:
+            st.error("A coluna RA ainda não existe no banco. Execute a migration V7 no Supabase.")
+            st.caption(str(e))
+            st.stop()
+
+        if existing:
+            student = existing[0]
+            if student.get("role") != "student":
+                st.error("Este RA já está vinculado a outro tipo de usuário. Avise o professor.")
+                st.stop()
+            update_payload = {"full_name": full_name, "active": True}
+            if email:
+                update_payload["email"] = email
+            sb_public.table("app_users").update(update_payload).eq("id", student["id"]).execute()
+            student_id = student["id"]
+        else:
+            created = (
+                sb_public.table("app_users")
+                .insert({
+                    "full_name": full_name,
+                    "email": email,
+                    "ra": ra,
+                    "role": "student",
+                    "password_hash": hash_password(ra),
+                    "active": True,
+                })
+                .execute()
+                .data
+                or []
+            )
+            student_id = created[0]["id"]
+
+        enrollment = (
+            sb_public.table("enrollments")
+            .select("id")
+            .eq("class_id", cls["id"])
+            .eq("student_id", student_id)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+
+        if enrollment:
+            sb_public.table("enrollments").update({"active": True}).eq("id", enrollment[0]["id"]).execute()
+        else:
+            sb_public.table("enrollments").insert({
+                "class_id": cls["id"],
+                "student_id": student_id,
+                "team_name": "",
+                "active": True,
+            }).execute()
+
+        st.success("Cadastro realizado com sucesso.")
+        st.markdown("**Como entrar no app:** use seu nome completo ou RA. A senha inicial é o próprio RA.")
+        st.link_button("Ir para o login", "https://irreal-app.streamlit.app/")
+        st.stop()
+
+
+if get_query_param("cadastro_turma") or get_query_param("turma") or get_query_param("class_code"):
+    render_public_student_registration()
+    st.stop()
+
 user = require_login()
 logout_button()
 sb = supabase_client()
 
 BUCKET_NAME = "deliverables"
 ALLOWED_UPLOAD_TYPES = ["pdf", "png", "jpg", "jpeg", "docx", "xlsx", "txt", "csv"]
+APP_PUBLIC_URL = "https://irreal-app.streamlit.app"
 
 
 # ==========================================================
@@ -216,6 +400,30 @@ def delete_row(table: str, row_id: str):
     return sb.table(table).delete().eq("id", row_id).execute()
 
 
+def get_app_public_url() -> str:
+    try:
+        return st.secrets.get("APP_PUBLIC_URL", APP_PUBLIC_URL).rstrip("/")
+    except Exception:
+        return APP_PUBLIC_URL
+
+
+def class_registration_link(c: dict) -> str:
+    code = (c.get("class_code") or "").strip()
+    if not code:
+        return ""
+    return f"{get_app_public_url()}/?cadastro_turma={quote(code)}"
+
+
+def show_class_registration_link(c: dict):
+    link = class_registration_link(c)
+    if not link:
+        return
+    st.markdown("**Link de cadastro para enviar aos alunos:**")
+    st.code(link, language="text")
+    st.link_button("Abrir link de cadastro", link)
+    st.caption("O aluno informa somente Nome completo e RA. A senha inicial será o próprio RA.")
+
+
 def get_available_classes(include_inactive=False):
     select = "id, name, shift, class_code, active, professor_id, courses(name)"
     q = sb.table("classes").select(select).order("name")
@@ -232,7 +440,7 @@ def get_available_classes(include_inactive=False):
 def get_class_enrollment_rows(class_id, active_only=True):
     q = (
         sb.table("enrollments")
-        .select("id, active, team_name, app_users(id, full_name, email, active)")
+        .select("id, active, team_name, app_users(id, full_name, email, ra, active)")
         .eq("class_id", class_id)
     )
 
@@ -362,6 +570,7 @@ def menu_for_user(user):
             "Liderança",
             "IRREAIS e loja",
             "Entregáveis",
+            "Feedback",
             "Exportações",
             "Configuração",
         ]
@@ -376,6 +585,7 @@ def menu_for_user(user):
             "Liderança",
             "IRREAIS e loja",
             "Entregáveis",
+            "Feedback",
         ]
 
     return [
@@ -387,9 +597,9 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V6")
+st.sidebar.title("🎮 IRREAL Cloud V7")
 page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V6")
+st.title("IRREAL App Cloud V7")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -524,7 +734,7 @@ elif page == "Turmas":
                     st.error("Selecione um curso existente ou informe um novo curso/área.")
                     st.stop()
 
-                insert_row(
+                created_class = insert_row(
                     "classes",
                     {
                         "course_id": course_id,
@@ -536,7 +746,8 @@ elif page == "Turmas":
                     },
                 )
                 st.success("Turma cadastrada.")
-                st.rerun()
+                show_class_registration_link({"class_code": created_class.get("class_code") or code.strip()})
+                st.info("Copie o link acima e envie aos alunos para cadastro com Nome completo e RA.")
 
     with tab_manage:
         st.subheader("Turmas cadastradas")
@@ -558,6 +769,8 @@ elif page == "Turmas":
                     key=f"class_shift_{c['id']}",
                 )
                 new_code = st.text_input("Código", value=c.get("class_code") or "", key=f"class_code_{c['id']}")
+
+                show_class_registration_link({"class_code": new_code or c.get("class_code")})
 
                 c1, c2, c3 = st.columns(3)
 
@@ -597,6 +810,7 @@ elif page == "Alunos":
     with tab_create:
         with st.form("student_form"):
             full_name = st.text_input("Nome completo do aluno")
+            ra = st.text_input("RA / Registro acadêmico [opcional]")
             password = st.text_input("Senha inicial do aluno", type="password")
             team_name = st.text_input("Equipe [opcional]")
             email = st.text_input("E-mail do aluno [opcional]")
@@ -607,6 +821,8 @@ elif page == "Alunos":
                 st.error("Nome completo e senha são obrigatórios.")
             else:
                 student = create_user(full_name, email, "student", password, created_by=user["id"])
+                if ra.strip():
+                    update_row("app_users", student["id"], {"ra": ra.strip()})
                 insert_row(
                     "enrollments",
                     {
@@ -629,12 +845,13 @@ elif page == "Alunos":
             with st.expander(f"{aluno.get('full_name')} | equipe: {e.get('team_name') or '-'} | {'ativo' if e.get('active') and aluno.get('active') else 'inativo'}"):
                 new_name = st.text_input("Nome", value=aluno.get("full_name") or "", key=f"student_name_{aluno.get('id')}")
                 new_email = st.text_input("E-mail", value=aluno.get("email") or "", key=f"student_email_{aluno.get('id')}")
+                new_ra = st.text_input("RA", value=aluno.get("ra") or "", key=f"student_ra_{aluno.get('id')}")
                 new_team = st.text_input("Equipe", value=e.get("team_name") or "", key=f"team_{e['id']}")
 
                 c1, c2, c3, c4 = st.columns(4)
 
                 if c1.button("Salvar aluno", key=f"save_student_{e['id']}"):
-                    update_row("app_users", aluno["id"], {"full_name": new_name.strip(), "email": new_email.strip() or None})
+                    update_row("app_users", aluno["id"], {"full_name": new_name.strip(), "email": new_email.strip() or None, "ra": new_ra.strip() or None})
                     update_row("enrollments", e["id"], {"team_name": new_team.strip()})
                     st.success("Aluno atualizado.")
                     st.rerun()
@@ -789,6 +1006,7 @@ elif page == "Equipes":
                 new_team_number = c2.text_input("Número da nova equipe")
 
             full_name = st.text_input("Nome completo do aluno")
+            ra = st.text_input("RA / Registro acadêmico [opcional]")
             email = st.text_input("E-mail [opcional]")
             password = st.text_input("Senha inicial", type="password")
             ok = st.form_submit_button("Cadastrar aluno na equipe")
@@ -815,6 +1033,8 @@ elif page == "Equipes":
                         st.error("Esta equipe já possui 6 alunos.")
                     else:
                         student = create_user(full_name, email, "student", password, created_by=user["id"])
+                        if ra.strip():
+                            update_row("app_users", student["id"], {"ra": ra.strip()})
                         insert_row(
                             "enrollments",
                             {
@@ -1359,6 +1579,114 @@ elif page == "Entregáveis":
 
                 show_file_link("Baixar arquivo enviado pelo aluno", d.get("file_name") or "arquivo", d.get("file_path"))
                 st.caption(f"E-mail: {d.get('email_status') or '-'} | Enviado em: {d.get('created_at') or '-'}")
+
+
+# ==========================================================
+# FEEDBACK / SUPORTE - PROFESSOR E CONTROLE GERAL
+# ==========================================================
+elif page == "Feedback":
+    st.header("Feedback e reporte de problemas")
+    st.caption("Use esta área para reportar problemas, dúvidas ou pedidos de melhoria do IRREAL App.")
+
+    available_classes = get_available_classes(include_inactive=True)
+    selected_class = None
+    if available_classes:
+        class_options = {"Sem turma específica": None}
+        class_options.update({class_label(c): c for c in available_classes})
+        selected_class = class_options[st.selectbox("Turma relacionada [opcional]", list(class_options.keys()))]
+
+    tab_new, tab_history = st.tabs(["Reportar problema", "Meus feedbacks"])
+
+    with tab_new:
+        with st.form("feedback_form"):
+            category = st.selectbox(
+                "Categoria",
+                ["Erro no app", "Dificuldade de uso", "Pedido de melhoria", "Problema com aluno/turma", "Outro"],
+            )
+            priority = st.selectbox("Prioridade", ["baixa", "normal", "alta", "crítica"], index=1)
+            title = st.text_input("Título do feedback")
+            description = st.text_area("Descreva o problema ou sugestão")
+            attachment = st.file_uploader(
+                "Anexar print ou arquivo [opcional]",
+                type=ALLOWED_UPLOAD_TYPES,
+                key="feedback_attachment",
+            )
+            ok = st.form_submit_button("Enviar feedback")
+
+        if ok:
+            if not title or not description:
+                st.error("Título e descrição são obrigatórios.")
+            else:
+                file_name, file_path = upload_file_to_storage(attachment, f"feedback/{user['id']}")
+                insert_row(
+                    "feedback_reports",
+                    {
+                        "reporter_id": user["id"],
+                        "reporter_role": user.get("role"),
+                        "class_id": selected_class["id"] if selected_class else None,
+                        "category": category,
+                        "priority": priority,
+                        "title": title.strip(),
+                        "description": description.strip(),
+                        "attachment_file_name": file_name,
+                        "attachment_file_path": file_path,
+                        "status": "aberto",
+                    },
+                )
+                st.success("Feedback enviado.")
+                st.rerun()
+
+    with tab_history:
+        if is_super_admin(user):
+            feedbacks = (
+                sb.table("feedback_reports")
+                .select("*, app_users(full_name, email), classes(name, class_code)")
+                .order("created_at", desc=True)
+                .limit(300)
+                .execute()
+                .data
+                or []
+            )
+        else:
+            feedbacks = (
+                sb.table("feedback_reports")
+                .select("*, app_users(full_name, email), classes(name, class_code)")
+                .eq("reporter_id", user["id"])
+                .order("created_at", desc=True)
+                .limit(100)
+                .execute()
+                .data
+                or []
+            )
+
+        if not feedbacks:
+            st.info("Nenhum feedback registrado.")
+        else:
+            for fb in feedbacks:
+                reporter = fb.get("app_users") or {}
+                cls = fb.get("classes") or {}
+                with st.expander(f"{fb.get('priority', '').upper()} | {fb.get('status')} | {fb.get('title')}"):
+                    st.write(f"**Categoria:** {fb.get('category')}")
+                    st.write(f"**Turma:** {cls.get('name') or '-'} {cls.get('class_code') or ''}")
+                    st.write(f"**Autor:** {reporter.get('full_name') or '-'}")
+                    st.write("**Descrição:**")
+                    st.write(fb.get("description") or "-")
+                    show_file_link("Baixar anexo do feedback", fb.get("attachment_file_name") or "arquivo", fb.get("attachment_file_path"))
+                    st.caption(f"Criado em: {fb.get('created_at') or '-'}")
+
+                    if is_super_admin(user):
+                        new_status = st.selectbox(
+                            "Status",
+                            ["aberto", "em análise", "resolvido", "fechado"],
+                            index=["aberto", "em análise", "resolvido", "fechado"].index(fb.get("status") or "aberto") if (fb.get("status") or "aberto") in ["aberto", "em análise", "resolvido", "fechado"] else 0,
+                            key=f"fb_status_{fb['id']}",
+                        )
+                        admin_notes = st.text_area("Observação interna", value=fb.get("admin_notes") or "", key=f"fb_notes_{fb['id']}")
+                        if st.button("Atualizar feedback", key=f"fb_update_{fb['id']}"):
+                            update_row("feedback_reports", fb["id"], {"status": new_status, "admin_notes": admin_notes})
+                            st.success("Feedback atualizado.")
+                            st.rerun()
+
 
 
 # ==========================================================
