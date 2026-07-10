@@ -27,7 +27,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V7", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V8", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -69,6 +69,43 @@ def apply_public_registration_style():
         min-height: 42px !important;
         box-shadow: 0 0 18px rgba(34, 197, 94, 0.35) !important;
     }
+
+
+    /* Correção de contraste para campos digitáveis no desktop e no celular */
+    input,
+    textarea,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="select"] > div,
+    [data-baseweb="base-input"] {
+        background-color: #111827 !important;
+        color: #F8FAFC !important;
+        -webkit-text-fill-color: #F8FAFC !important;
+        border-color: rgba(148, 163, 184, 0.45) !important;
+        caret-color: #22C55E !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #CBD5E1 !important;
+        opacity: 0.85 !important;
+        -webkit-text-fill-color: #CBD5E1 !important;
+    }
+
+    [data-baseweb="select"] span,
+    [data-baseweb="select"] div {
+        color: #F8FAFC !important;
+    }
+
+    div[data-testid="stTextInput"] input:focus,
+    div[data-testid="stTextArea"] textarea:focus,
+    div[data-testid="stNumberInput"] input:focus {
+        border: 1px solid #22C55E !important;
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.75) !important;
+    }
+
     h1, h2, h3, label, p, span { color: #F8FAFC; }
     </style>
     """, unsafe_allow_html=True)
@@ -270,6 +307,42 @@ div[data-testid="stFormSubmitButton"] button:hover {
     color: #020617 !important;
     border-color: #BBF7D0 !important;
 }
+
+
+    /* Correção de contraste para campos digitáveis no desktop e no celular */
+    input,
+    textarea,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="select"] > div,
+    [data-baseweb="base-input"] {
+        background-color: #111827 !important;
+        color: #F8FAFC !important;
+        -webkit-text-fill-color: #F8FAFC !important;
+        border-color: rgba(148, 163, 184, 0.45) !important;
+        caret-color: #22C55E !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #CBD5E1 !important;
+        opacity: 0.85 !important;
+        -webkit-text-fill-color: #CBD5E1 !important;
+    }
+
+    [data-baseweb="select"] span,
+    [data-baseweb="select"] div {
+        color: #F8FAFC !important;
+    }
+
+    div[data-testid="stTextInput"] input:focus,
+    div[data-testid="stTextArea"] textarea:focus,
+    div[data-testid="stNumberInput"] input:focus {
+        border: 1px solid #22C55E !important;
+        box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.75) !important;
+    }
 
 h1, h2, h3 {
     color: #FFFFFF;
@@ -571,6 +644,7 @@ def menu_for_user(user):
             "IRREAIS e loja",
             "Entregáveis",
             "Feedback",
+            "Retorno feedbacks",
             "Exportações",
             "Configuração",
         ]
@@ -597,9 +671,9 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V7")
+st.sidebar.title("🎮 IRREAL Cloud V8")
 page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V7")
+st.title("IRREAL App Cloud V8")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -1674,19 +1748,100 @@ elif page == "Feedback":
                     show_file_link("Baixar anexo do feedback", fb.get("attachment_file_name") or "arquivo", fb.get("attachment_file_path"))
                     st.caption(f"Criado em: {fb.get('created_at') or '-'}")
 
+                    resposta = fb.get("admin_response") or fb.get("admin_notes") or ""
+                    if resposta:
+                        st.success(f"Retorno da coordenação: {resposta}")
+
                     if is_super_admin(user):
                         new_status = st.selectbox(
                             "Status",
-                            ["aberto", "em análise", "resolvido", "fechado"],
-                            index=["aberto", "em análise", "resolvido", "fechado"].index(fb.get("status") or "aberto") if (fb.get("status") or "aberto") in ["aberto", "em análise", "resolvido", "fechado"] else 0,
+                            ["aberto", "em análise", "respondido", "resolvido", "fechado"],
+                            index=["aberto", "em análise", "respondido", "resolvido", "fechado"].index(fb.get("status") or "aberto") if (fb.get("status") or "aberto") in ["aberto", "em análise", "respondido", "resolvido", "fechado"] else 0,
                             key=f"fb_status_{fb['id']}",
                         )
-                        admin_notes = st.text_area("Observação interna", value=fb.get("admin_notes") or "", key=f"fb_notes_{fb['id']}")
-                        if st.button("Atualizar feedback", key=f"fb_update_{fb['id']}"):
-                            update_row("feedback_reports", fb["id"], {"status": new_status, "admin_notes": admin_notes})
-                            st.success("Feedback atualizado.")
+                        admin_response = st.text_area("Retorno para o docente", value=resposta, key=f"fb_response_{fb['id']}")
+                        admin_notes = st.text_area("Observação interna [opcional]", value=fb.get("admin_notes") or "", key=f"fb_notes_{fb['id']}")
+                        if st.button("Responder/atualizar feedback", key=f"fb_update_{fb['id']}"):
+                            update_row("feedback_reports", fb["id"], {
+                                "status": new_status,
+                                "admin_response": admin_response,
+                                "admin_notes": admin_notes,
+                                "responded_by": user["id"],
+                                "responded_at": datetime.now().isoformat(),
+                                "updated_at": datetime.now().isoformat(),
+                            })
+                            st.success("Retorno registrado.")
                             st.rerun()
 
+
+
+# ==========================================================
+# RETORNO DOS FEEDBACKS - CONTROLE GERAL
+# ==========================================================
+elif page == "Retorno feedbacks":
+    if not is_super_admin(user):
+        st.stop()
+
+    st.header("Retorno dos feedbacks dos docentes")
+    st.caption("Área do controle geral para acompanhar, responder e encerrar problemas reportados pelos professores.")
+
+    status_filter = st.selectbox("Filtrar por status", ["Todos", "aberto", "em análise", "respondido", "resolvido", "fechado"])
+    priority_filter = st.selectbox("Filtrar por prioridade", ["Todas", "baixa", "normal", "alta", "crítica"])
+
+    q = (
+        sb.table("feedback_reports")
+        .select("*, app_users(full_name, email), classes(name, class_code)")
+        .order("created_at", desc=True)
+        .limit(500)
+    )
+    if status_filter != "Todos":
+        q = q.eq("status", status_filter)
+    if priority_filter != "Todas":
+        q = q.eq("priority", priority_filter)
+
+    feedbacks = q.execute().data or []
+
+    if not feedbacks:
+        st.info("Nenhum feedback encontrado para o filtro selecionado.")
+    else:
+        st.metric("Feedbacks encontrados", len(feedbacks))
+        for fb in feedbacks:
+            reporter = fb.get("app_users") or {}
+            cls = fb.get("classes") or {}
+            titulo = f"{(fb.get('priority') or '').upper()} | {fb.get('status')} | {fb.get('title')} | {reporter.get('full_name') or '-'}"
+            with st.expander(titulo):
+                c1, c2 = st.columns(2)
+                c1.write(f"**Categoria:** {fb.get('category') or '-'}")
+                c1.write(f"**Prioridade:** {fb.get('priority') or '-'}")
+                c2.write(f"**Docente:** {reporter.get('full_name') or '-'}")
+                c2.write(f"**Turma:** {cls.get('name') or '-'} {cls.get('class_code') or ''}")
+
+                st.write("**Descrição do problema/sugestão:**")
+                st.write(fb.get("description") or "-")
+                show_file_link("Baixar anexo do feedback", fb.get("attachment_file_name") or "arquivo", fb.get("attachment_file_path"))
+
+                with st.form(f"return_feedback_{fb['id']}"):
+                    new_status = st.selectbox(
+                        "Status",
+                        ["aberto", "em análise", "respondido", "resolvido", "fechado"],
+                        index=["aberto", "em análise", "respondido", "resolvido", "fechado"].index(fb.get("status") or "aberto") if (fb.get("status") or "aberto") in ["aberto", "em análise", "respondido", "resolvido", "fechado"] else 0,
+                        key=f"return_status_{fb['id']}",
+                    )
+                    admin_response = st.text_area("Retorno para o docente", value=fb.get("admin_response") or fb.get("admin_notes") or "")
+                    admin_notes = st.text_area("Observação interna [opcional]", value=fb.get("admin_notes") or "")
+                    ok = st.form_submit_button("Salvar retorno")
+
+                if ok:
+                    update_row("feedback_reports", fb["id"], {
+                        "status": new_status,
+                        "admin_response": admin_response,
+                        "admin_notes": admin_notes,
+                        "responded_by": user["id"],
+                        "responded_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                    })
+                    st.success("Retorno salvo para o docente.")
+                    st.rerun()
 
 
 # ==========================================================
@@ -1881,3 +2036,5 @@ elif page == "Configuração":
     - Professores podem criar/editar/desativar turmas, alunos, equipes, missões, atividades e liderança.
     - Alunos podem baixar materiais e enviar entregáveis com foto/PDF/arquivos.
     """)
+
+
