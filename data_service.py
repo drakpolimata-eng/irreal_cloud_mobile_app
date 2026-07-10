@@ -126,4 +126,3 @@ def create_challenge_event(challenge_id, actor_id, event_type, notes=""):
         },
     )
 
-
