@@ -1,7 +1,7 @@
-streamlit>=1.36.0
-supabase>=2.6.0
-pandas>=2.2.0
-passlib>=1.7.4
+streamlit==1.59.1
+supabase==2.31.0
+pandas==3.0.3
+passlib==1.7.4
 bcrypt==4.0.1
-resend>=2.4.0
-python-dotenv>=1.0.1
+resend==2.32.2
+python-dotenv==1.2.2
