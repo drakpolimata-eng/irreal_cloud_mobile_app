@@ -28,7 +28,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V9.1", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App ", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
