@@ -166,6 +166,35 @@ def apply_login_style():
         border-color: #BBF7D0 !important;
     }
 
+
+
+    input,
+    textarea,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="select"] > div,
+    [data-baseweb="base-input"] {
+        background-color: #111827 !important;
+        color: #F8FAFC !important;
+        -webkit-text-fill-color: #F8FAFC !important;
+        border-color: rgba(148, 163, 184, 0.45) !important;
+        caret-color: #22C55E !important;
+    }
+
+    input::placeholder,
+    textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #CBD5E1 !important;
+        opacity: 0.85 !important;
+        -webkit-text-fill-color: #CBD5E1 !important;
+    }
+
+    [data-baseweb="select"] span,
+    [data-baseweb="select"] div {
+        color: #F8FAFC !important;
+    }
+
     .irreal-login-title {
         text-align: center;
         font-size: 1.45rem;
