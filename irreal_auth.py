@@ -324,3 +324,4 @@ def is_professor(user):
 def is_student(user):
     return bool(user and user.get("role") == "student")
 
+
