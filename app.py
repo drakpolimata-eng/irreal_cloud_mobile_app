@@ -27,7 +27,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V8.2.2", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V9", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -699,6 +699,117 @@ def delivery_form(form_key, c, mission=None, challenge=None, default_title=""):
 
 
 # ==========================================================
+# DASHBOARD / REDIRECIONAMENTO / ALVOS DE MISSÕES E ATIVIDADES
+# ==========================================================
+def dashboard_page_name() -> str:
+    if is_super_admin(user):
+        return "Dashboard geral"
+    if is_professor(user):
+        return "Dashboard"
+    return "Minha área"
+
+
+def go_dashboard():
+    """Volta para a janela principal após operações de cadastro/edição/exclusão."""
+    st.session_state["selected_menu"] = dashboard_page_name()
+    st.rerun()
+
+
+def success_and_dashboard(message: str):
+    st.success(message)
+    go_dashboard()
+
+
+def get_team_names_for_class(class_id: str):
+    rows = get_class_enrollment_rows(class_id)
+    return sorted(set((e.get("team_name") or "").strip() for e in rows if (e.get("team_name") or "").strip()))
+
+
+def get_target_classes(current_class: dict, target_mode: str):
+    if target_mode == "Todas as minhas turmas":
+        return get_available_classes()
+    return [current_class]
+
+
+def target_scope_from_mode(target_mode: str) -> str:
+    if target_mode == "Equipe específica":
+        return "equipe"
+    if target_mode == "Aluno específico":
+        return "aluno"
+    return "turma"
+
+
+def make_target_label(row: dict) -> str:
+    scope = row.get("target_scope") or "turma"
+    if scope == "equipe":
+        return f"Equipe: {row.get('target_team_name') or '-'}"
+    if scope == "aluno":
+        student_id = row.get("target_student_id")
+        if student_id:
+            srows = get_rows("app_users", id=student_id)
+            return srows[0].get("full_name") if srows else "Aluno não encontrado"
+        return "Aluno não informado"
+    return "Turma inteira"
+
+
+def student_team_for_class(class_id: str):
+    rows = (
+        sb.table("enrollments")
+        .select("team_name")
+        .eq("class_id", class_id)
+        .eq("student_id", user["id"])
+        .eq("active", True)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return (rows[0].get("team_name") or "").strip() if rows else ""
+
+
+def visible_to_current_student(row: dict, class_id: str) -> bool:
+    scope = row.get("target_scope") or "turma"
+    if scope in ["turma", "todas_turmas", "todas"]:
+        return True
+    if scope == "aluno":
+        return row.get("target_student_id") == user.get("id")
+    if scope == "equipe":
+        target_team = (row.get("target_team_name") or "").strip().lower()
+        my_team = student_team_for_class(class_id).lower()
+        return bool(target_team and my_team and target_team == my_team)
+    return True
+
+
+def render_professor_dashboard():
+    st.header("Dashboard do professor")
+    classes = get_available_classes()
+    class_ids = [c["id"] for c in classes]
+    total_students = 0
+    total_missions = 0
+    total_challenges = 0
+    total_deliverables = 0
+
+    for cid in class_ids:
+        total_students += len(get_class_enrollment_rows(cid))
+        total_missions += len(get_rows("missions", class_id=cid, active=True))
+        total_challenges += len(get_rows("challenges", class_id=cid, active=True))
+        total_deliverables += len(get_rows("deliverables", class_id=cid))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Turmas", len(classes))
+    c2.metric("Alunos", total_students)
+    c3.metric("Missões/Atividades", total_missions + total_challenges)
+    c4.metric("Entregáveis", total_deliverables)
+
+    st.subheader("Minhas turmas")
+    if classes:
+        st.dataframe(pd.DataFrame(classes), width="stretch", hide_index=True)
+    else:
+        st.info("Nenhuma turma vinculada. Use a aba Turmas para criar sua primeira turma.")
+
+
+
+# ==========================================================
 # MENU
 # ==========================================================
 def menu_for_user(user):
@@ -722,6 +833,7 @@ def menu_for_user(user):
 
     if is_professor(user):
         return [
+            "Dashboard",
             "Turmas",
             "Alunos",
             "Equipes",
@@ -742,9 +854,12 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V8.2.2")
-page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V8.2.2")
+st.sidebar.title("🎮 IRREAL Cloud V9")
+_menu_options = menu_for_user(user)
+if "selected_menu" not in st.session_state or st.session_state["selected_menu"] not in _menu_options:
+    st.session_state["selected_menu"] = dashboard_page_name() if dashboard_page_name() in _menu_options else _menu_options[0]
+page = st.sidebar.radio("Menu", _menu_options, key="selected_menu")
+st.title("IRREAL App Cloud V9")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -770,6 +885,12 @@ if page == "Dashboard geral":
     st.dataframe(pd.DataFrame(classes), width="stretch", hide_index=True)
 
 
+elif page == "Dashboard":
+    if not is_professor(user):
+        st.stop()
+    render_professor_dashboard()
+
+
 # ==========================================================
 # PROFESSORES
 # ==========================================================
@@ -791,7 +912,7 @@ elif page == "Professores":
         else:
             create_user(full_name, email, "professor", password, created_by=user["id"])
             st.success("Professor cadastrado.")
-            st.rerun()
+            go_dashboard()
 
     st.subheader("Professores cadastrados")
 
@@ -804,11 +925,11 @@ elif page == "Professores":
             if c1.button("Salvar professor", key=f"save_teacher_{t['id']}"):
                 update_row("app_users", t["id"], {"full_name": new_name.strip(), "email": new_email.strip() or None})
                 st.success("Professor atualizado.")
-                st.rerun()
+                go_dashboard()
 
             if c2.button("Desativar professor", key=f"deact_teacher_{t['id']}"):
                 deactivate_user(t["id"])
-                st.rerun()
+                go_dashboard()
 
             new_pass = st.text_input("Nova senha", type="password", key=f"pass_teacher_{t['id']}")
             if c3.button("Trocar senha", key=f"chg_teacher_{t['id']}") and new_pass:
@@ -922,11 +1043,11 @@ elif page == "Turmas":
                 if c1.button("Salvar turma", key=f"save_class_{c['id']}"):
                     update_row("classes", c["id"], {"name": new_name.strip(), "shift": new_shift, "class_code": new_code.strip()})
                     st.success("Turma atualizada.")
-                    st.rerun()
+                    go_dashboard()
 
                 if c2.button("Ativar/Desativar", key=f"toggle_class_{c['id']}"):
                     update_row("classes", c["id"], {"active": not bool(c.get("active"))})
-                    st.rerun()
+                    go_dashboard()
 
                 confirm = st.text_input("Para excluir definitivamente, digite EXCLUIR", key=f"delete_class_confirm_{c['id']}")
                 if c3.button("Excluir turma", key=f"delete_class_{c['id']}"):
@@ -934,7 +1055,7 @@ elif page == "Turmas":
                         try:
                             delete_row("classes", c["id"])
                             st.success("Turma excluída.")
-                            st.rerun()
+                            go_dashboard()
                         except Exception as e:
                             st.error(f"Não foi possível excluir. Desative a turma ou remova vínculos antes. Erro: {e}")
                     else:
@@ -978,7 +1099,7 @@ elif page == "Alunos":
                     },
                 )
                 st.success("Aluno cadastrado e vinculado.")
-                st.rerun()
+                go_dashboard()
 
     with tab_list:
         enrollments = get_class_enrollment_rows(selected_class["id"], active_only=False)
@@ -999,15 +1120,15 @@ elif page == "Alunos":
                     update_row("app_users", aluno["id"], {"full_name": new_name.strip(), "email": new_email.strip() or None, "ra": new_ra.strip() or None})
                     update_row("enrollments", e["id"], {"team_name": new_team.strip()})
                     st.success("Aluno atualizado.")
-                    st.rerun()
+                    go_dashboard()
 
                 if c2.button("Ativar/Desvincular", key=f"toggle_enroll_{e['id']}"):
                     update_row("enrollments", e["id"], {"active": not bool(e.get("active"))})
-                    st.rerun()
+                    go_dashboard()
 
                 if c3.button("Desativar aluno", key=f"deact_student_{aluno.get('id')}"):
                     deactivate_user(aluno["id"])
-                    st.rerun()
+                    go_dashboard()
 
                 new_pass = st.text_input("Nova senha do aluno", type="password", key=f"newpass_{aluno.get('id')}")
                 if c4.button("Trocar senha", key=f"chgpass_{aluno.get('id')}") and new_pass:
@@ -1080,7 +1201,7 @@ elif page == "Equipes":
                     for e in selected_enrollments:
                         update_row("enrollments", e["id"], {"team_name": preview_label})
                     st.success(f"Equipe '{preview_label}' atualizada com sucesso.")
-                    st.rerun()
+                    go_dashboard()
 
     with tab_manage:
         teams = sorted(set((e.get("team_name") or "").strip() for e in enrollments if (e.get("team_name") or "").strip()))
@@ -1098,7 +1219,7 @@ elif page == "Equipes":
                 c1.write(f"**{aluno.get('full_name')}** — {aluno.get('email') or 'sem e-mail'}")
                 if c2.button("Remover da equipe", key=f"remove_team_{e['id']}"):
                     update_row("enrollments", e["id"], {"team_name": ""})
-                    st.rerun()
+                    go_dashboard()
 
             st.divider()
             st.subheader("Adicionar aluno existente à equipe")
@@ -1117,7 +1238,7 @@ elif page == "Equipes":
                     else:
                         update_row("enrollments", options[selected_label]["id"], {"team_name": team})
                         st.success("Aluno adicionado à equipe.")
-                        st.rerun()
+                        go_dashboard()
 
             st.divider()
             st.subheader("Excluir equipe")
@@ -1129,7 +1250,7 @@ elif page == "Equipes":
                     for e in members:
                         update_row("enrollments", e["id"], {"team_name": ""})
                     st.success("Equipe removida.")
-                    st.rerun()
+                    go_dashboard()
                 else:
                     st.error("Digite EXCLUIR para confirmar.")
 
@@ -1190,7 +1311,7 @@ elif page == "Equipes":
                             },
                         )
                         st.success("Aluno cadastrado e vinculado à equipe.")
-                        st.rerun()
+                        go_dashboard()
 
     with tab_summary:
         rows = []
@@ -1241,7 +1362,7 @@ elif page == "Missões":
                 },
             )
             st.success("Unidade cadastrada.")
-            st.rerun()
+            go_dashboard()
 
         st.dataframe(
             pd.DataFrame(get_rows("curricular_units", class_id=selected_class["id"], active=True)),
@@ -1251,8 +1372,26 @@ elif page == "Missões":
 
     with tab_create:
         units = get_rows("curricular_units", class_id=selected_class["id"], active=True)
+        current_teams = get_team_names_for_class(selected_class["id"])
+        current_students = get_enrolled_students(selected_class["id"])
 
         with st.form("mission_form"):
+            target_mode = st.radio(
+                "Enviar missão para",
+                ["Turma atual", "Todas as minhas turmas", "Equipe específica", "Aluno específico"],
+                horizontal=False,
+                key="mission_target_mode",
+            )
+            target_team_name = ""
+            target_student = None
+            if target_mode == "Equipe específica":
+                if current_teams:
+                    target_team_name = st.selectbox("Equipe da turma atual", current_teams, key="mission_team_target")
+                else:
+                    st.warning("Nenhuma equipe cadastrada nesta turma.")
+            if target_mode == "Aluno específico":
+                target_student = select_row("Aluno da turma atual", current_students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}", key="mission_student_target") if current_students else None
+
             unit = select_row("Unidade curricular [opcional]", units, lambda r: r["name"], key="mission_unit") if units else None
             title = st.text_input("Título da missão")
             description = st.text_area("Descrição / orientação")
@@ -1269,25 +1408,36 @@ elif page == "Missões":
         if ok:
             if not title:
                 st.error("Informe o título da missão.")
+            elif target_mode == "Equipe específica" and not target_team_name:
+                st.error("Selecione uma equipe.")
+            elif target_mode == "Aluno específico" and not target_student:
+                st.error("Selecione um aluno.")
             else:
                 file_name, file_path = upload_file_to_storage(uploaded, f"mission_materials/{selected_class['id']}/{user['id']}")
-                insert_row(
-                    "missions",
-                    {
-                        "class_id": selected_class["id"],
-                        "unit_id": unit["id"] if unit else None,
-                        "title": title.strip(),
-                        "description": description.strip(),
-                        "max_irreais": int(max_irreais),
-                        "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(),
-                        "active": True,
-                        "attachment_external_link": material_link.strip(),
-                        "attachment_file_name": file_name,
-                        "attachment_file_path": file_path,
-                    },
-                )
-                st.success("Missão cadastrada.")
-                st.rerun()
+                target_classes = get_target_classes(selected_class, target_mode)
+                created_count = 0
+                for target_class in target_classes:
+                    insert_row(
+                        "missions",
+                        {
+                            "class_id": target_class["id"],
+                            "unit_id": unit["id"] if unit and target_class["id"] == selected_class["id"] else None,
+                            "created_by": user["id"],
+                            "target_scope": target_scope_from_mode(target_mode),
+                            "target_team_name": target_team_name if target_mode == "Equipe específica" else "",
+                            "target_student_id": target_student["id"] if target_mode == "Aluno específico" and target_class["id"] == selected_class["id"] else None,
+                            "title": title.strip(),
+                            "description": description.strip(),
+                            "max_irreais": int(max_irreais),
+                            "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(),
+                            "active": True,
+                            "attachment_external_link": material_link.strip(),
+                            "attachment_file_name": file_name,
+                            "attachment_file_path": file_path,
+                        },
+                    )
+                    created_count += 1
+                success_and_dashboard(f"Missão cadastrada para {created_count} turma(s).")
 
     with tab_manage:
         missions = get_rows("missions", class_id=selected_class["id"], order="created_at", desc=True)
@@ -1299,6 +1449,7 @@ elif page == "Missões":
             with st.expander(f"{m.get('title')} — {'ativa' if m.get('active') else 'inativa'}"):
                 st.write(m.get("description") or "-")
                 st.write(f"**IRREAIS:** {m.get('max_irreais')} | **Prazo:** {m.get('deadline_at') or '-'}")
+                st.write(f"**Alvo:** {make_target_label(m)}")
                 show_material("Material da missão", m)
 
                 new_title = st.text_input("Título", value=m.get("title") or "", key=f"mission_title_{m['id']}")
@@ -1325,7 +1476,7 @@ elif page == "Missões":
 
                     update_row("missions", m["id"], payload)
                     st.success("Missão atualizada.")
-                    st.rerun()
+                    go_dashboard()
 
                 if c2.button("Excluir arquivo/link", key=f"clear_mission_file_{m['id']}"):
                     update_row("missions", m["id"], {
@@ -1333,11 +1484,11 @@ elif page == "Missões":
                         "attachment_file_name": "",
                         "attachment_file_path": "",
                     })
-                    st.rerun()
+                    go_dashboard()
 
                 if c3.button("Ativar/Desativar", key=f"toggle_mission_{m['id']}"):
                     update_row("missions", m["id"], {"active": not bool(m.get("active"))})
-                    st.rerun()
+                    go_dashboard()
 
                 confirm = st.text_input("Digite EXCLUIR para excluir missão", key=f"delete_mission_confirm_{m['id']}")
                 if c4.button("Excluir missão", key=f"delete_mission_{m['id']}"):
@@ -1345,7 +1496,7 @@ elif page == "Missões":
                         try:
                             delete_row("missions", m["id"])
                             st.success("Missão excluída.")
-                            st.rerun()
+                            go_dashboard()
                         except Exception as e:
                             st.error(f"Não foi possível excluir. Use desativar. Erro: {e}")
                     else:
@@ -1366,9 +1517,10 @@ elif page == "Desafios e atividades":
     units = get_rows("curricular_units", class_id=selected_class["id"], active=True)
     missions = get_rows("missions", class_id=selected_class["id"], active=True)
     students = get_enrolled_students(selected_class["id"])
+    current_teams = get_team_names_for_class(selected_class["id"])
 
     with tab_create:
-        st.info("Use 'Turma inteira' para todos. Use 'Aluno específico' para recuperação, nivelamento ou trilha individual.")
+        st.info("Envie para a turma atual, todas as suas turmas, uma equipe específica ou um aluno específico.")
 
         with st.form("challenge_form"):
             c1, c2 = st.columns(2)
@@ -1388,10 +1540,20 @@ elif page == "Desafios e atividades":
                 mission = select_row("Missão geral [opcional]", missions, lambda r: r["title"], key="challenge_mission") if missions else None
 
             with c2:
-                target_scope_label = st.radio("Aplicação", ["Turma inteira", "Aluno específico"])
+                target_scope_label = st.radio(
+                    "Aplicação",
+                    ["Turma atual", "Todas as minhas turmas", "Equipe específica", "Aluno específico"],
+                    key="challenge_target_mode",
+                )
                 target_student = None
+                target_team_name = ""
+                if target_scope_label == "Equipe específica":
+                    if current_teams:
+                        target_team_name = st.selectbox("Equipe da turma atual", current_teams, key="challenge_team_target")
+                    else:
+                        st.warning("Nenhuma equipe cadastrada nesta turma.")
                 if target_scope_label == "Aluno específico":
-                    target_student = select_row("Aluno", students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}", key="challenge_student")
+                    target_student = select_row("Aluno", students, lambda r: f"{r['full_name']} | {r.get('team_name') or '-'}", key="challenge_student") if students else None
 
                 max_base = st.number_input("IRREAIS base", min_value=1, value=100, step=10)
                 multiplier = challenge_multiplier(difficulty)
@@ -1416,6 +1578,8 @@ elif page == "Desafios e atividades":
         if ok:
             if not title:
                 st.error("Informe o título.")
+            elif target_scope_label == "Equipe específica" and not target_team_name:
+                st.error("Selecione uma equipe.")
             elif target_scope_label == "Aluno específico" and not target_student:
                 st.error("Selecione o aluno.")
             else:
@@ -1424,34 +1588,37 @@ elif page == "Desafios e atividades":
                     f"teacher_activity_attachments/{selected_class['id']}/{user['id']}",
                 )
 
-                challenge = insert_row(
-                    "challenges",
-                    {
-                        "class_id": selected_class["id"],
-                        "unit_id": unit["id"] if unit else None,
-                        "mission_id": mission["id"] if mission else None,
-                        "created_by": user["id"],
-                        "title": title.strip(),
-                        "challenge_type": challenge_type,
-                        "difficulty": difficulty,
-                        "target_scope": "aluno" if target_scope_label == "Aluno específico" else "turma",
-                        "target_student_id": target_student["id"] if target_student else None,
-                        "description": description.strip(),
-                        "instructions": instructions.strip(),
-                        "expected_deliverable": expected.strip(),
-                        "attachment_external_link": attachment_external_link.strip(),
-                        "attachment_file_name": attachment_file_name,
-                        "attachment_file_path": attachment_file_path,
-                        "max_irreais": int(max_base * multiplier),
-                        "penalty_irreais": int(penalty),
-                        "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(),
-                        "active": True,
-                    },
-                )
-
-                create_challenge_event(challenge["id"], user["id"], "created", "Desafio/atividade criado.")
-                st.success("Desafio/atividade publicado.")
-                st.rerun()
+                target_classes = get_target_classes(selected_class, target_scope_label)
+                created_count = 0
+                for target_class in target_classes:
+                    challenge = insert_row(
+                        "challenges",
+                        {
+                            "class_id": target_class["id"],
+                            "unit_id": unit["id"] if unit and target_class["id"] == selected_class["id"] else None,
+                            "mission_id": mission["id"] if mission and target_class["id"] == selected_class["id"] else None,
+                            "created_by": user["id"],
+                            "title": title.strip(),
+                            "challenge_type": challenge_type,
+                            "difficulty": difficulty,
+                            "target_scope": target_scope_from_mode(target_scope_label),
+                            "target_team_name": target_team_name if target_scope_label == "Equipe específica" else "",
+                            "target_student_id": target_student["id"] if target_scope_label == "Aluno específico" and target_class["id"] == selected_class["id"] else None,
+                            "description": description.strip(),
+                            "instructions": instructions.strip(),
+                            "expected_deliverable": expected.strip(),
+                            "attachment_external_link": attachment_external_link.strip(),
+                            "attachment_file_name": attachment_file_name,
+                            "attachment_file_path": attachment_file_path,
+                            "max_irreais": int(max_base * multiplier),
+                            "penalty_irreais": int(penalty),
+                            "deadline_at": datetime.combine(deadline, datetime.min.time()).isoformat(),
+                            "active": True,
+                        },
+                    )
+                    create_challenge_event(challenge["id"], user["id"], "created", "Desafio/atividade criado.")
+                    created_count += 1
+                success_and_dashboard(f"Desafio/atividade publicado para {created_count} turma(s).")
 
     with tab_manage:
         st.subheader("Ativos")
@@ -1462,10 +1629,7 @@ elif page == "Desafios e atividades":
             st.info("Nenhum desafio ativo.")
 
         for ch in challenges:
-            target = "Turma inteira"
-            if ch.get("target_scope") == "aluno" and ch.get("target_student_id"):
-                srows = get_rows("app_users", id=ch["target_student_id"])
-                target = srows[0]["full_name"] if srows else "Aluno não encontrado"
+            target = make_target_label(ch)
 
             with st.expander(f"{type_label(ch['challenge_type'])} | {difficulty_label(ch['difficulty'])} | {ch['title']} | alvo: {target}"):
                 st.write(ch.get("description") or "")
@@ -1504,7 +1668,7 @@ elif page == "Desafios e atividades":
                     update_row("challenges", ch["id"], payload)
                     create_challenge_event(ch["id"], user["id"], "updated", "Atividade atualizada.")
                     st.success("Atividade atualizada.")
-                    st.rerun()
+                    go_dashboard()
 
                 if c2.button("Excluir arquivo/link", key=f"clear_ch_file_{ch['id']}"):
                     update_row("challenges", ch["id"], {
@@ -1513,7 +1677,7 @@ elif page == "Desafios e atividades":
                         "attachment_file_path": "",
                     })
                     create_challenge_event(ch["id"], user["id"], "material_removed", "Material removido.")
-                    st.rerun()
+                    go_dashboard()
 
                 if c3.button("Retirar/desativar", key=f"remove_ch_{ch['id']}"):
                     update_row(
@@ -1526,7 +1690,7 @@ elif page == "Desafios e atividades":
                         },
                     )
                     create_challenge_event(ch["id"], user["id"], "removed", "Retirado pelo docente.")
-                    st.rerun()
+                    go_dashboard()
 
                 confirm = st.text_input("Digite EXCLUIR para excluir atividade", key=f"delete_ch_confirm_{ch['id']}")
                 if c4.button("Excluir atividade", key=f"delete_ch_{ch['id']}"):
@@ -1534,7 +1698,7 @@ elif page == "Desafios e atividades":
                         try:
                             delete_row("challenges", ch["id"])
                             st.success("Atividade excluída.")
-                            st.rerun()
+                            go_dashboard()
                         except Exception as e:
                             st.error(f"Não foi possível excluir. Use desativar. Erro: {e}")
                     else:
@@ -1550,7 +1714,7 @@ elif page == "Desafios e atividades":
             if st.button(f"Reativar: {ch['title']}", key=f"react_{ch['id']}"):
                 update_row("challenges", ch["id"], {"active": True, "removed_at": None, "removed_by": None})
                 create_challenge_event(ch["id"], user["id"], "reactivated", "Reativado pelo docente.")
-                st.rerun()
+                go_dashboard()
 
     with tab_events:
         events = sb.table("challenge_events").select("*, challenges(title), app_users(full_name)").order("created_at", desc=True).limit(200).execute().data or []
@@ -1585,7 +1749,7 @@ elif page == "Liderança":
             },
         )
         st.success("Líder registrado.")
-        st.rerun()
+        go_dashboard()
 
     leaders = sb.table("leaders").select("id, class_date, notes, app_users(id, full_name)").eq("class_id", selected_class["id"]).order("class_date", desc=True).execute().data or []
 
@@ -1604,12 +1768,12 @@ elif page == "Liderança":
             if c1.button("Salvar observação", key=f"save_leader_{l['id']}"):
                 update_row("leaders", l["id"], {"notes": new_notes.strip()})
                 st.success("Liderança atualizada.")
-                st.rerun()
+                go_dashboard()
 
             if c2.button("Excluir liderança", key=f"delete_leader_{l['id']}"):
                 delete_row("leaders", l["id"])
                 st.success("Registro excluído.")
-                st.rerun()
+                go_dashboard()
 
 
 # ==========================================================
@@ -1645,7 +1809,7 @@ elif page == "IRREAIS e loja":
                 },
             )
             st.success("Transação registrada.")
-            st.rerun()
+            go_dashboard()
 
     with tab2:
         with st.form("store_form"):
@@ -1668,7 +1832,7 @@ elif page == "IRREAIS e loja":
                 },
             )
             st.success("Item cadastrado.")
-            st.rerun()
+            go_dashboard()
 
         st.dataframe(pd.DataFrame(get_rows("store_items", class_id=selected_class["id"], active=True)), width="stretch", hide_index=True)
 
@@ -1789,7 +1953,7 @@ elif page == "Feedback":
                     },
                 )
                 st.success("Feedback enviado.")
-                st.rerun()
+                go_dashboard()
 
     with tab_history:
         if is_super_admin(user):
@@ -1852,7 +2016,7 @@ elif page == "Feedback":
                                 "updated_at": datetime.now().isoformat(),
                             })
                             st.success("Retorno registrado.")
-                            st.rerun()
+                            go_dashboard()
 
 
 
@@ -1922,7 +2086,7 @@ elif page == "Retorno feedbacks":
                         "updated_at": datetime.now().isoformat(),
                     })
                     st.success("Retorno salvo para o docente.")
-                    st.rerun()
+                    go_dashboard()
 
 
 # ==========================================================
@@ -1954,6 +2118,7 @@ elif page == "Minhas missões":
 
     c = selected["class"]
     missions = get_rows("missions", class_id=c["id"], active=True, order="deadline_at")
+    missions = [m for m in missions if visible_to_current_student(m, c["id"])]
 
     if not missions:
         st.info("Nenhuma missão disponível no momento.")
@@ -1985,9 +2150,8 @@ elif page == "Meus desafios":
 
     c = selected["class"]
 
-    turma_ch = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).eq("target_scope", "turma").execute().data or []
-    aluno_ch = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).eq("target_scope", "aluno").eq("target_student_id", user["id"]).execute().data or []
-    challenges = sorted(turma_ch + aluno_ch, key=lambda x: x.get("deadline_at") or "")
+    all_challenges = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).execute().data or []
+    challenges = sorted([ch for ch in all_challenges if visible_to_current_student(ch, c["id"])], key=lambda x: x.get("deadline_at") or "")
 
     if not challenges:
         st.info("Nenhum desafio/atividade atribuído no momento.")
@@ -2023,9 +2187,8 @@ elif page == "Enviar entregável":
 
     c = selected["class"]
     missions = get_rows("missions", class_id=c["id"], active=True)
-    turma_ch = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).eq("target_scope", "turma").execute().data or []
-    aluno_ch = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).eq("target_scope", "aluno").eq("target_student_id", user["id"]).execute().data or []
-    challenges = turma_ch + aluno_ch
+    all_challenges = sb.table("challenges").select("*").eq("class_id", c["id"]).eq("active", True).execute().data or []
+    challenges = [ch for ch in all_challenges if visible_to_current_student(ch, c["id"])]
 
     with st.form("deliverable_form"):
         mission = select_row("Missão geral [opcional]", missions, lambda r: r["title"], key="manual_mission") if missions else None
