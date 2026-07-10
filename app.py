@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -28,7 +27,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V8.1", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V8.2.2", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -743,9 +742,9 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V8.1")
+st.sidebar.title("🎮 IRREAL Cloud V8.2.2")
 page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V8.1")
+st.title("IRREAL App Cloud V8.2.2")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -768,7 +767,7 @@ if page == "Dashboard geral":
     c4.metric("Entregáveis", len(deliverables))
 
     st.subheader("Turmas")
-    st.dataframe(pd.DataFrame(classes), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(classes), width="stretch", hide_index=True)
 
 
 # ==========================================================
@@ -1205,11 +1204,11 @@ elif page == "Equipes":
 
         df = pd.DataFrame(rows)
         st.subheader("Alunos por equipe")
-        st.dataframe(df.sort_values(["equipe", "aluno"]) if not df.empty else df, use_container_width=True, hide_index=True)
+        st.dataframe(df.sort_values(["equipe", "aluno"]) if not df.empty else df, width="stretch", hide_index=True)
 
         if not df.empty:
             st.subheader("Quantidade por equipe")
-            st.dataframe(df.groupby("equipe")["aluno"].count().reset_index(name="quantidade"), use_container_width=True, hide_index=True)
+            st.dataframe(df.groupby("equipe")["aluno"].count().reset_index(name="quantidade"), width="stretch", hide_index=True)
 
 
 # ==========================================================
@@ -1246,7 +1245,7 @@ elif page == "Missões":
 
         st.dataframe(
             pd.DataFrame(get_rows("curricular_units", class_id=selected_class["id"], active=True)),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -1545,7 +1544,7 @@ elif page == "Desafios e atividades":
         inactive = get_rows("challenges", class_id=selected_class["id"], active=False, order="created_at", desc=True)
 
         if inactive:
-            st.dataframe(pd.DataFrame(inactive), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(inactive), width="stretch", hide_index=True)
 
         for ch in inactive:
             if st.button(f"Reativar: {ch['title']}", key=f"react_{ch['id']}"):
@@ -1555,7 +1554,7 @@ elif page == "Desafios e atividades":
 
     with tab_events:
         events = sb.table("challenge_events").select("*, challenges(title), app_users(full_name)").order("created_at", desc=True).limit(200).execute().data or []
-        st.dataframe(pd.DataFrame(events), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(events), width="stretch", hide_index=True)
 
 
 # ==========================================================
@@ -1671,63 +1670,35 @@ elif page == "IRREAIS e loja":
             st.success("Item cadastrado.")
             st.rerun()
 
-        st.dataframe(pd.DataFrame(get_rows("store_items", class_id=selected_class["id"], active=True)), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(get_rows("store_items", class_id=selected_class["id"], active=True)), width="stretch", hide_index=True)
 
     with tab3:
-        # Correção V8.2.1:
-        # A tabela transactions possui mais de uma relação possível com app_users
-        # (student_id e created_by). Por isso, a relação do aluno precisa ser
-        # indicada explicitamente usando a FK transactions_student_id_fkey.
-        try:
-            rows = (
-                sb.table("transactions")
-                .select(
-                    "student_id, team_name, amount, "
-                    "student:app_users!transactions_student_id_fkey(full_name)"
-                )
-                .eq("class_id", selected_class["id"])
-                .execute()
-                .data
-                or []
+        rows = (
+            sb.table("transactions")
+            .select(
+                "student_id, team_name, amount, "
+                "student:app_users!transactions_student_id_fkey(full_name)"
             )
-        except Exception as e:
-            st.error("Não foi possível carregar o ranking de IRREAIS.")
-            st.caption(
-                "Verifique se a chave estrangeira transactions_student_id_fkey "
-                "existe no Supabase. Erro técnico:"
-            )
-            st.code(str(e))
-            rows = []
+            .eq("class_id", selected_class["id"])
+            .execute()
+            .data
+            or []
+        )
 
         if rows:
             df = pd.DataFrame([
                 {
-                    "aluno": (r.get("student") or {}).get("full_name") or "Aluno não identificado",
-                    "equipe": r.get("team_name") or "Sem equipe",
+                    "aluno": (r.get("student") or {}).get("full_name"),
+                    "equipe": r.get("team_name"),
                     "valor": int(r.get("amount") or 0),
                 }
                 for r in rows
             ])
-
             st.subheader("Ranking individual")
-            st.dataframe(
-                df.groupby(["aluno", "equipe"], dropna=False)["valor"]
-                .sum()
-                .reset_index()
-                .sort_values("valor", ascending=False),
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(df.groupby(["aluno", "equipe"], dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False), width="stretch", hide_index=True)
 
             st.subheader("Ranking por equipe")
-            st.dataframe(
-                df.groupby("equipe", dropna=False)["valor"]
-                .sum()
-                .reset_index()
-                .sort_values("valor", ascending=False),
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(df.groupby("equipe", dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False), width="stretch", hide_index=True)
         else:
             st.info("Sem transações nesta turma.")
 
@@ -1746,7 +1717,7 @@ elif page == "Entregáveis":
     if not deliverables:
         st.info("Nenhum entregável enviado nesta turma.")
     else:
-        st.dataframe(pd.DataFrame(deliverables), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(deliverables), width="stretch", hide_index=True)
         st.subheader("Abrir entregáveis")
 
         for d in deliverables:
@@ -1964,7 +1935,7 @@ elif page == "Minha área":
     st.subheader("Minhas turmas")
 
     if class_rows:
-        st.dataframe(pd.DataFrame(class_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(class_rows), width="stretch", hide_index=True)
     else:
         st.info("Você ainda não está vinculado a nenhuma turma.")
 
@@ -2091,7 +2062,7 @@ elif page == "Meu extrato":
     rows = sb.table("transactions").select("*").eq("student_id", user["id"]).eq("class_id", c["id"]).order("created_at", desc=True).execute().data or []
 
     st.metric("Saldo", f"{balance_for_student(user['id'], c['id'])} IRREAIS")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 # ==========================================================
@@ -2146,4 +2117,3 @@ elif page == "Configuração":
     - Professores podem criar/editar/desativar turmas, alunos, equipes, missões, atividades e liderança.
     - Alunos podem baixar materiais e enviar entregáveis com foto/PDF/arquivos.
     """)
-
