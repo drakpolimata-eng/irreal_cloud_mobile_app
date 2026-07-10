@@ -27,7 +27,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V8", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V8.1", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -671,9 +671,9 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V8")
+st.sidebar.title("🎮 IRREAL Cloud V8.1")
 page = st.sidebar.radio("Menu", menu_for_user(user))
-st.title("IRREAL App Cloud V8")
+st.title("IRREAL App Cloud V8.1")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -1714,7 +1714,7 @@ elif page == "Feedback":
         if is_super_admin(user):
             feedbacks = (
                 sb.table("feedback_reports")
-                .select("*, app_users(full_name, email), classes(name, class_code)")
+                .select("*, reporter:app_users!feedback_reports_reporter_id_fkey(full_name, email), class_info:classes!feedback_reports_class_id_fkey(name, class_code)")
                 .order("created_at", desc=True)
                 .limit(300)
                 .execute()
@@ -1724,7 +1724,7 @@ elif page == "Feedback":
         else:
             feedbacks = (
                 sb.table("feedback_reports")
-                .select("*, app_users(full_name, email), classes(name, class_code)")
+                .select("*, reporter:app_users!feedback_reports_reporter_id_fkey(full_name, email), class_info:classes!feedback_reports_class_id_fkey(name, class_code)")
                 .eq("reporter_id", user["id"])
                 .order("created_at", desc=True)
                 .limit(100)
@@ -1737,8 +1737,8 @@ elif page == "Feedback":
             st.info("Nenhum feedback registrado.")
         else:
             for fb in feedbacks:
-                reporter = fb.get("app_users") or {}
-                cls = fb.get("classes") or {}
+                reporter = fb.get("reporter") or {}
+                cls = fb.get("class_info") or {}
                 with st.expander(f"{fb.get('priority', '').upper()} | {fb.get('status')} | {fb.get('title')}"):
                     st.write(f"**Categoria:** {fb.get('category')}")
                     st.write(f"**Turma:** {cls.get('name') or '-'} {cls.get('class_code') or ''}")
@@ -1790,7 +1790,7 @@ elif page == "Retorno feedbacks":
 
     q = (
         sb.table("feedback_reports")
-        .select("*, app_users(full_name, email), classes(name, class_code)")
+        .select("*, reporter:app_users!feedback_reports_reporter_id_fkey(full_name, email), class_info:classes!feedback_reports_class_id_fkey(name, class_code)")
         .order("created_at", desc=True)
         .limit(500)
     )
@@ -1806,8 +1806,8 @@ elif page == "Retorno feedbacks":
     else:
         st.metric("Feedbacks encontrados", len(feedbacks))
         for fb in feedbacks:
-            reporter = fb.get("app_users") or {}
-            cls = fb.get("classes") or {}
+            reporter = fb.get("reporter") or {}
+            cls = fb.get("class_info") or {}
             titulo = f"{(fb.get('priority') or '').upper()} | {fb.get('status')} | {fb.get('title')} | {reporter.get('full_name') or '-'}"
             with st.expander(titulo):
                 c1, c2 = st.columns(2)
