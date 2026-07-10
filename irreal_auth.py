@@ -216,7 +216,79 @@ def apply_login_style():
     label, p, span {
         color: #F8FAFC;
     }
-    </style>
+    
+
+/* ==========================================================
+   CORREÇÃO DEFINITIVA: CAMPOS ESCUROS + AUTOFILL CHROME/EDGE
+   Resolve caixa branca em login e formulários no desktop/celular.
+   ========================================================== */
+input,
+textarea,
+div[data-baseweb="input"] input,
+div[data-baseweb="textarea"] textarea,
+div[data-baseweb="base-input"],
+div[data-baseweb="base-input"] input,
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input {
+    background-color: #1F2333 !important;
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    caret-color: #22C55E !important;
+    border-radius: 10px !important;
+    border-color: rgba(148, 163, 184, 0.55) !important;
+}
+
+input::placeholder,
+textarea::placeholder,
+div[data-baseweb="input"] input::placeholder,
+div[data-baseweb="textarea"] textarea::placeholder {
+    color: #CBD5E1 !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: #CBD5E1 !important;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active {
+    -webkit-text-fill-color: #FFFFFF !important;
+    box-shadow: 0 0 0px 1000px #1F2333 inset !important;
+    -webkit-box-shadow: 0 0 0px 1000px #1F2333 inset !important;
+    transition: background-color 9999s ease-in-out 0s !important;
+    caret-color: #22C55E !important;
+}
+
+/* Selectbox / multiselect */
+div[data-baseweb="select"] > div,
+div[data-baseweb="popover"] div,
+ul[data-testid="stSelectboxVirtualDropdown"] {
+    background-color: #1F2333 !important;
+    color: #FFFFFF !important;
+}
+
+div[data-baseweb="select"] span,
+div[data-baseweb="select"] div,
+div[data-baseweb="popover"] span,
+div[data-baseweb="popover"] div {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+}
+
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextArea"] textarea:focus,
+div[data-testid="stNumberInput"] input:focus,
+div[data-baseweb="input"] input:focus,
+div[data-baseweb="textarea"] textarea:focus {
+    border: 1px solid #22C55E !important;
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.75) !important;
+}
+
+</style>
     """, unsafe_allow_html=True)
 
 
@@ -249,7 +321,7 @@ def require_login():
     splash_path = get_splash_path()
 
     if splash_path:
-        st.image(str(splash_path), use_container_width=True)
+        st.image(str(splash_path), width="stretch")
 
     st.markdown(
         '<div class="irreal-login-title">Acesso ao IRREAL App</div>',
@@ -323,5 +395,4 @@ def is_professor(user):
 
 def is_student(user):
     return bool(user and user.get("role") == "student")
-
 
