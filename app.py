@@ -28,7 +28,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App ", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -935,12 +935,12 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL app")
+st.sidebar.title("🎮 IRREAL App")
 _menu_options = menu_for_user(user)
 if "selected_menu" not in st.session_state or st.session_state["selected_menu"] not in _menu_options:
     st.session_state["selected_menu"] = dashboard_page_name() if dashboard_page_name() in _menu_options else _menu_options[0]
 page = st.sidebar.radio("Menu", _menu_options, key="selected_menu")
-st.title("IRREAL App Cloud V9.1")
+st.title("IRREAL App")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
