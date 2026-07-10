@@ -1674,22 +1674,60 @@ elif page == "IRREAIS e loja":
         st.dataframe(pd.DataFrame(get_rows("store_items", class_id=selected_class["id"], active=True)), use_container_width=True, hide_index=True)
 
     with tab3:
-        rows = sb.table("transactions").select("student_id, team_name, amount, app_users(full_name)").eq("class_id", selected_class["id"]).execute().data or []
+        # Correção V8.2.1:
+        # A tabela transactions possui mais de uma relação possível com app_users
+        # (student_id e created_by). Por isso, a relação do aluno precisa ser
+        # indicada explicitamente usando a FK transactions_student_id_fkey.
+        try:
+            rows = (
+                sb.table("transactions")
+                .select(
+                    "student_id, team_name, amount, "
+                    "student:app_users!transactions_student_id_fkey(full_name)"
+                )
+                .eq("class_id", selected_class["id"])
+                .execute()
+                .data
+                or []
+            )
+        except Exception as e:
+            st.error("Não foi possível carregar o ranking de IRREAIS.")
+            st.caption(
+                "Verifique se a chave estrangeira transactions_student_id_fkey "
+                "existe no Supabase. Erro técnico:"
+            )
+            st.code(str(e))
+            rows = []
 
         if rows:
             df = pd.DataFrame([
                 {
-                    "aluno": (r.get("app_users") or {}).get("full_name"),
-                    "equipe": r.get("team_name"),
+                    "aluno": (r.get("student") or {}).get("full_name") or "Aluno não identificado",
+                    "equipe": r.get("team_name") or "Sem equipe",
                     "valor": int(r.get("amount") or 0),
                 }
                 for r in rows
             ])
+
             st.subheader("Ranking individual")
-            st.dataframe(df.groupby(["aluno", "equipe"], dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False), use_container_width=True, hide_index=True)
+            st.dataframe(
+                df.groupby(["aluno", "equipe"], dropna=False)["valor"]
+                .sum()
+                .reset_index()
+                .sort_values("valor", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
 
             st.subheader("Ranking por equipe")
-            st.dataframe(df.groupby("equipe", dropna=False)["valor"].sum().reset_index().sort_values("valor", ascending=False), use_container_width=True, hide_index=True)
+            st.dataframe(
+                df.groupby("equipe", dropna=False)["valor"]
+                .sum()
+                .reset_index()
+                .sort_values("valor", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
             st.info("Sem transações nesta turma.")
 
@@ -2108,3 +2146,4 @@ elif page == "Configuração":
     - Professores podem criar/editar/desativar turmas, alunos, equipes, missões, atividades e liderança.
     - Alunos podem baixar materiais e enviar entregáveis com foto/PDF/arquivos.
     """)
+
