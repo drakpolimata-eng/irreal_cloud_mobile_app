@@ -1,4 +1,6 @@
 import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -113,6 +115,96 @@ def authenticate(identifier: str, password: str, role: str | None = None):
             return user
 
     return None
+
+
+SESSION_QUERY_PARAM = "irreal_session"
+SESSION_DAYS = 14
+
+
+def _now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _expires_utc_iso() -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS)).isoformat()
+
+
+def get_query_session_token() -> str:
+    try:
+        value = st.query_params.get(SESSION_QUERY_PARAM, "")
+    except Exception:
+        return ""
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return value or ""
+
+
+def create_login_session(user_id: str) -> str:
+    """Cria sessão persistente por URL token. Não armazena senha."""
+    token = secrets.token_urlsafe(32)
+    sb = supabase_client()
+    if sb is None:
+        return ""
+    try:
+        sb.table("login_sessions").insert({
+            "token": token,
+            "user_id": user_id,
+            "created_at": _now_utc_iso(),
+            "last_seen_at": _now_utc_iso(),
+            "expires_at": _expires_utc_iso(),
+            "active": True,
+        }).execute()
+        return token
+    except Exception:
+        # Se a migration ainda não foi executada, o login continua funcionando,
+        # mas sem persistência após recarregar a página.
+        return ""
+
+
+def load_user_from_login_session(token: str):
+    if not token:
+        return None
+    sb = supabase_client()
+    if sb is None:
+        return None
+    try:
+        rows = (
+            sb.table("login_sessions")
+            .select("token, user_id, expires_at, active, user:app_users!login_sessions_user_id_fkey(*)")
+            .eq("token", token)
+            .eq("active", True)
+            .gt("expires_at", _now_utc_iso())
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        user = row.get("user") or {}
+        if not user or not user.get("active"):
+            return None
+        try:
+            sb.table("login_sessions").update({"last_seen_at": _now_utc_iso()}).eq("token", token).execute()
+        except Exception:
+            pass
+        st.session_state["session_token"] = token
+        return user
+    except Exception:
+        return None
+
+
+def delete_login_session(token: str):
+    if not token:
+        return
+    sb = supabase_client()
+    if sb is None:
+        return
+    try:
+        sb.table("login_sessions").update({"active": False}).eq("token", token).execute()
+    except Exception:
+        pass
 
 
 def apply_login_style():
@@ -316,6 +408,14 @@ def require_login():
     if st.session_state["user"]:
         return st.session_state["user"]
 
+    # Mantém login após recarregar a página usando token seguro na URL.
+    token = get_query_session_token()
+    if token:
+        persistent_user = load_user_from_login_session(token)
+        if persistent_user:
+            st.session_state["user"] = persistent_user
+            return persistent_user
+
     apply_login_style()
 
     splash_path = get_splash_path()
@@ -363,6 +463,13 @@ def require_login():
 
         if user:
             st.session_state["user"] = user
+            token = create_login_session(user["id"])
+            if token:
+                st.session_state["session_token"] = token
+                try:
+                    st.query_params[SESSION_QUERY_PARAM] = token
+                except Exception:
+                    pass
             st.rerun()
         else:
             st.error("Acesso negado. Confira nome/e-mail, senha e perfil.")
@@ -381,7 +488,13 @@ def logout_button():
         st.caption(f"Perfil: {user['role']}")
 
         if st.button("Sair"):
+            token = st.session_state.get("session_token") or get_query_session_token()
+            delete_login_session(token)
             st.session_state.clear()
+            try:
+                st.query_params.clear()
+            except Exception:
+                pass
             st.rerun()
 
 
@@ -395,4 +508,3 @@ def is_professor(user):
 
 def is_student(user):
     return bool(user and user.get("role") == "student")
-
