@@ -935,7 +935,7 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V9.1")
+st.sidebar.title("🎮 IRREAL app")
 _menu_options = menu_for_user(user)
 if "selected_menu" not in st.session_state or st.session_state["selected_menu"] not in _menu_options:
     st.session_state["selected_menu"] = dashboard_page_name() if dashboard_page_name() in _menu_options else _menu_options[0]
