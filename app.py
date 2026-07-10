@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import date, datetime
 from urllib.parse import quote
 from irreal_auth import (
@@ -27,7 +28,7 @@ from data_service import (
 )
 from email_service import send_deliverable_email
 
-st.set_page_config(page_title="IRREAL App Cloud V9", page_icon="🎮", layout="wide")
+st.set_page_config(page_title="IRREAL App Cloud V9.1", page_icon="🎮", layout="wide")
 
 
 def get_query_param(name: str) -> str:
@@ -780,20 +781,87 @@ def visible_to_current_student(row: dict, class_id: str) -> bool:
     return True
 
 
+def render_pie_chart(title: str, items: dict):
+    """Renderiza gráfico de pizza simples no Dashboard."""
+    rows = [
+        {"indicador": str(k), "valor": int(v or 0)}
+        for k, v in items.items()
+        if int(v or 0) > 0
+    ]
+
+    st.subheader(title)
+    if not rows:
+        st.info("Ainda não há dados suficientes para gerar o gráfico.")
+        return
+
+    df = pd.DataFrame(rows)
+    chart = (
+        alt.Chart(df)
+        .mark_arc(innerRadius=55)
+        .encode(
+            theta=alt.Theta(field="valor", type="quantitative"),
+            color=alt.Color(field="indicador", type="nominal", title="Indicador"),
+            tooltip=["indicador", "valor"],
+        )
+        .properties(height=320)
+    )
+    st.altair_chart(chart, width="stretch")
+
+
+def class_stats(class_id: str):
+    """Calcula indicadores resumidos de uma turma."""
+    return {
+        "alunos": len(get_class_enrollment_rows(class_id)),
+        "missoes": len(get_rows("missions", class_id=class_id, active=True)),
+        "atividades": len(get_rows("challenges", class_id=class_id, active=True)),
+        "entregaveis": len(get_rows("deliverables", class_id=class_id)),
+    }
+
+
+def build_classes_dashboard_table(classes, include_professor=False):
+    """Monta tabela limpa para o usuário, sem UUID/id técnico."""
+    rows = []
+    for c in classes:
+        stats = class_stats(c["id"])
+        course = c.get("courses") or {}
+        row = {
+            "Turma": c.get("name") or "-",
+            "Curso/área": course.get("name") or "-",
+            "Turno": c.get("shift") or "-",
+            "Código da turma": c.get("class_code") or "-",
+            "Status": "Ativa" if c.get("active") else "Inativa",
+            "Alunos": stats["alunos"],
+            "Missões": stats["missoes"],
+            "Atividades": stats["atividades"],
+            "Entregáveis": stats["entregaveis"],
+            "Link de cadastro": class_registration_link(c),
+        }
+        if include_professor:
+            professor_name = "-"
+            if c.get("professor_id"):
+                prof = get_rows("app_users", id=c.get("professor_id"))
+                if prof:
+                    professor_name = prof[0].get("full_name") or "-"
+            row = {"Professor": professor_name, **row}
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def render_professor_dashboard():
     st.header("Dashboard do professor")
     classes = get_available_classes()
-    class_ids = [c["id"] for c in classes]
+
     total_students = 0
     total_missions = 0
     total_challenges = 0
     total_deliverables = 0
 
-    for cid in class_ids:
-        total_students += len(get_class_enrollment_rows(cid))
-        total_missions += len(get_rows("missions", class_id=cid, active=True))
-        total_challenges += len(get_rows("challenges", class_id=cid, active=True))
-        total_deliverables += len(get_rows("deliverables", class_id=cid))
+    for c in classes:
+        stats = class_stats(c["id"])
+        total_students += stats["alunos"]
+        total_missions += stats["missoes"]
+        total_challenges += stats["atividades"]
+        total_deliverables += stats["entregaveis"]
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Turmas", len(classes))
@@ -801,11 +869,24 @@ def render_professor_dashboard():
     c3.metric("Missões/Atividades", total_missions + total_challenges)
     c4.metric("Entregáveis", total_deliverables)
 
-    st.subheader("Minhas turmas")
-    if classes:
-        st.dataframe(pd.DataFrame(classes), width="stretch", hide_index=True)
-    else:
-        st.info("Nenhuma turma vinculada. Use a aba Turmas para criar sua primeira turma.")
+    col_chart, col_table = st.columns([1, 2])
+    with col_chart:
+        render_pie_chart(
+            "Distribuição geral",
+            {
+                "Alunos": total_students,
+                "Missões": total_missions,
+                "Atividades": total_challenges,
+                "Entregáveis": total_deliverables,
+            },
+        )
+
+    with col_table:
+        st.subheader("Minhas turmas")
+        if classes:
+            st.dataframe(build_classes_dashboard_table(classes), width="stretch", hide_index=True)
+        else:
+            st.info("Nenhuma turma vinculada. Use a aba Turmas para criar sua primeira turma.")
 
 
 
@@ -854,12 +935,12 @@ def menu_for_user(user):
     ]
 
 
-st.sidebar.title("🎮 IRREAL Cloud V9")
+st.sidebar.title("🎮 IRREAL Cloud V9.1")
 _menu_options = menu_for_user(user)
 if "selected_menu" not in st.session_state or st.session_state["selected_menu"] not in _menu_options:
     st.session_state["selected_menu"] = dashboard_page_name() if dashboard_page_name() in _menu_options else _menu_options[0]
 page = st.sidebar.radio("Menu", _menu_options, key="selected_menu")
-st.title("IRREAL App Cloud V9")
+st.title("IRREAL App Cloud V9.1")
 st.caption(f"Acesso: {user['full_name']} — {role_label(user['role'])}")
 
 
@@ -872,8 +953,10 @@ if page == "Dashboard geral":
 
     teachers = get_rows("app_users", role="professor")
     students = get_rows("app_users", role="student")
-    classes = get_rows("classes")
+    classes = get_available_classes(include_inactive=True)
     deliverables = get_rows("deliverables")
+    missions = get_rows("missions")
+    challenges = get_rows("challenges")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Professores", len(teachers))
@@ -881,8 +964,26 @@ if page == "Dashboard geral":
     c3.metric("Turmas", len(classes))
     c4.metric("Entregáveis", len(deliverables))
 
-    st.subheader("Turmas")
-    st.dataframe(pd.DataFrame(classes), width="stretch", hide_index=True)
+    col_chart, col_table = st.columns([1, 2])
+    with col_chart:
+        render_pie_chart(
+            "Distribuição geral do app",
+            {
+                "Professores": len(teachers),
+                "Alunos": len(students),
+                "Turmas": len(classes),
+                "Missões": len(missions),
+                "Atividades": len(challenges),
+                "Entregáveis": len(deliverables),
+            },
+        )
+
+    with col_table:
+        st.subheader("Turmas")
+        if classes:
+            st.dataframe(build_classes_dashboard_table(classes, include_professor=True), width="stretch", hide_index=True)
+        else:
+            st.info("Nenhuma turma cadastrada.")
 
 
 elif page == "Dashboard":
